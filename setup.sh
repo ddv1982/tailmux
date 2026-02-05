@@ -238,9 +238,7 @@ do_install() {
     install_tmux
   fi
 
-  if confirm "Add tailmux shell function? [Y/n]" "y"; then
-    install_shell_function
-  fi
+  install_shell_function
 
   echo ""
   print_success "Setup complete!"
