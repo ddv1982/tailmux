@@ -25,7 +25,9 @@ tailmux <hostname>
 
 Connects to the host via SSH over Tailscale and attaches to an existing tmux session (or creates a new one).
 
-- `hostname` - Tailscale device name or IP (find yours with `tailscale status`)
+- `hostname` - Tailscale device name or IP
+
+**Tip:** Use `tailscale status` to list all devices with their hostnames and IPs - handy for troubleshooting connection issues.
 
 **Examples:**
 
