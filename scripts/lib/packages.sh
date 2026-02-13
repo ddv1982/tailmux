@@ -331,9 +331,17 @@ uninstall_tailscale() {
     return 1
   fi
 
-  print_step "Removing Tailscale state and configuration..."
-  sudo rm -rf /var/lib/tailscale
-  sudo rm -rf /etc/tailscale
+  print_warning "This can permanently remove local Tailscale state:"
+  print_warning "  - /var/lib/tailscale"
+  print_warning "  - /etc/tailscale"
+  if confirm_exact "Type DELETE_TAILSCALE_STATE to remove these paths: " "DELETE_TAILSCALE_STATE"; then
+    print_step "Removing Tailscale state and configuration..."
+    sudo rm -rf /var/lib/tailscale
+    sudo rm -rf /etc/tailscale
+  else
+    print_warning "Skipped deleting Tailscale state directories."
+    print_warning "To remove later: sudo rm -rf /var/lib/tailscale /etc/tailscale"
+  fi
 
   print_success "Tailscale uninstalled"
 }

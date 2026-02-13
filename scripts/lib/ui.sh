@@ -11,3 +11,11 @@ confirm() {
   reply=${reply:-$default}
   [[ "$reply" =~ ^[Yy]$ ]]
 }
+
+confirm_exact() {
+  local prompt="${1:?missing prompt}"
+  local expected="${2:?missing expected reply}"
+  local reply
+  read -r -p "$prompt " reply
+  [[ "$reply" == "$expected" ]]
+}

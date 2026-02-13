@@ -110,7 +110,36 @@ BIN
 
   cat > "$bin_dir/sudo" <<'BIN'
 #!/usr/bin/env bash
-"$@"
+if [[ -n "${SUDO_CALLS_FILE:-}" ]]; then
+  printf '%s\n' "$*" >> "$SUDO_CALLS_FILE"
+fi
+if [[ $# -eq 0 ]]; then
+  exit 0
+fi
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  rm|/bin/rm|/usr/bin/rm)
+    if [[ -n "${SUDO_RM_CALLS_FILE:-}" ]]; then
+      printf '%s\n' "$cmd $*" >> "$SUDO_RM_CALLS_FILE"
+    fi
+    exit 0
+    ;;
+  env)
+    env "$@"
+    ;;
+  *)
+    "$cmd" "$@"
+    ;;
+esac
+BIN
+
+  cat > "$bin_dir/ssh" <<'BIN'
+#!/usr/bin/env bash
+if [[ -n "${SSH_CALLS_FILE:-}" ]]; then
+  printf '%s\n' "$*" >> "$SSH_CALLS_FILE"
+fi
+exit "${SSH_EXIT_CODE:-0}"
 BIN
 
   cat > "$bin_dir/systemctl" <<'BIN'
@@ -150,7 +179,7 @@ BIN
 exit 0
 BIN
 
-  chmod +x "$bin_dir/tailscale" "$bin_dir/tmux" "$bin_dir/sudo" "$bin_dir/systemctl" "$bin_dir/apt-get"
+  chmod +x "$bin_dir/tailscale" "$bin_dir/tmux" "$bin_dir/sudo" "$bin_dir/ssh" "$bin_dir/systemctl" "$bin_dir/apt-get"
 }
 
 make_fake_macos_bin() {
@@ -582,6 +611,108 @@ INP
   pass "curl-style bootstrap"
 }
 
+test_tailmux_rejects_option_target() {
+  local tmp
+  local fake_bin
+  local hosts_file
+  local ssh_calls
+  local out
+  local status
+
+  tmp="$(mktemp -d)"
+  fake_bin="$tmp/bin"
+  hosts_file="$tmp/home/hosts"
+  ssh_calls="$tmp/home/ssh.calls"
+  mkdir -p "$fake_bin" "$tmp/home"
+  make_fake_bin "$fake_bin"
+
+  HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP' >/dev/null
+y
+n
+INP
+
+  cat > "$hosts_file" <<'HOSTS'
+evil -oProxyCommand=whoami
+HOSTS
+
+  set +e
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" SSH_CALLS_FILE="$ssh_calls" TAILMUX_HOSTS_FILE="$hosts_file" bash -lc 'source "$HOME/.profile"; tailmux evil' 2>&1)"
+  status=$?
+  set -e
+
+  [[ $status -ne 0 ]] || fail "expected unsafe target rejection"
+  [[ "$out" == *"refusing unsafe destination"* ]] || fail "expected unsafe destination message"
+  if [[ -f "$ssh_calls" ]] && [[ -s "$ssh_calls" ]]; then
+    fail "ssh should not be invoked for unsafe destination"
+  fi
+  pass "tailmux rejects option-style targets"
+}
+
+test_uninstall_tailscale_state_requires_typed_confirmation() {
+  local tmp
+  local fake_bin
+  local rm_calls
+  local out
+
+  tmp="$(mktemp -d)"
+  fake_bin="$tmp/bin"
+  rm_calls="$tmp/home/sudo-rm.calls"
+  mkdir -p "$fake_bin" "$tmp/home"
+  make_fake_bin "$fake_bin"
+
+  HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP' >/dev/null
+y
+n
+INP
+
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" SUDO_RM_CALLS_FILE="$rm_calls" TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" uninstall <<'INP'
+n
+n
+n
+y
+WRONG_TOKEN
+INP
+)"
+
+  [[ "$out" == *"Skipped deleting Tailscale state directories."* ]] || fail "expected skipped state deletion message"
+  if [[ -f "$rm_calls" ]] && grep -q '/var/lib/tailscale\|/etc/tailscale' "$rm_calls"; then
+    fail "unexpected tailscale state deletion when confirmation token is wrong"
+  fi
+  pass "uninstall state deletion requires typed confirmation"
+}
+
+test_uninstall_tailscale_state_deletes_with_typed_confirmation() {
+  local tmp
+  local fake_bin
+  local rm_calls
+  local out
+
+  tmp="$(mktemp -d)"
+  fake_bin="$tmp/bin"
+  rm_calls="$tmp/home/sudo-rm.calls"
+  mkdir -p "$fake_bin" "$tmp/home"
+  make_fake_bin "$fake_bin"
+
+  HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP' >/dev/null
+y
+n
+INP
+
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" SUDO_RM_CALLS_FILE="$rm_calls" TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" uninstall <<'INP'
+n
+n
+n
+y
+DELETE_TAILSCALE_STATE
+INP
+)"
+
+  [[ "$out" == *"Removing Tailscale state and configuration..."* ]] || fail "expected state deletion step when token matches"
+  assert_contains "$rm_calls" '/var/lib/tailscale'
+  assert_contains "$rm_calls" '/etc/tailscale'
+  pass "uninstall state deletion with typed confirmation"
+}
+
 main() {
   test_syntax_checks
   test_loader_missing_module_fails
@@ -597,6 +728,9 @@ main() {
   test_malformed_tailmux_block_not_modified
   test_macos_path_selection_mocked
   test_curl_style_bootstrap
+  test_tailmux_rejects_option_target
+  test_uninstall_tailscale_state_requires_typed_confirmation
+  test_uninstall_tailscale_state_deletes_with_typed_confirmation
   echo "All smoke tests passed."
 }
 

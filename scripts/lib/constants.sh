@@ -330,8 +330,17 @@ PY
   target="$(printf '%s' "$resolved" | awk -F '\t' '{print $1}')"
   mode="$(printf '%s' "$resolved" | awk -F '\t' '{print $2}')"
 
+  if [[ -z "$target" ]]; then
+    echo "tailmux: failed to resolve a destination for '$host'" >&2
+    return 1
+  fi
+  if [[ "$target" == -* ]]; then
+    echo "tailmux: refusing unsafe destination '$target'" >&2
+    return 1
+  fi
+
   echo "tailmux: resolved $host -> $target ($mode)" >&2
-  ssh -t "$target" "PATH=\"/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH\"; if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else echo \"tmux not found on remote\" >&2; exit 127; fi"
+  ssh -t -- "$target" "PATH=\"/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH\"; if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else echo \"tmux not found on remote\" >&2; exit 127; fi"
 }
 EOF
 )"
