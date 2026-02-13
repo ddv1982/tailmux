@@ -265,6 +265,32 @@ INP
   pass "install idempotence"
 }
 
+test_stale_tailmux_refresh() {
+  local tmp
+  local fake_bin
+  local out
+  tmp="$(mktemp -d)"
+  fake_bin="$tmp/bin"
+  mkdir -p "$fake_bin" "$tmp/home"
+  make_fake_bin "$fake_bin"
+
+  cat > "$tmp/home/.profile" <<'RC'
+# >>> tailmux managed block (tailmux) >>>
+tailmux() { echo hi; }
+# <<< tailmux managed block (tailmux) <<<
+RC
+
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" USER=tailuser TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
+n
+INP
+)"
+
+  [[ "$out" == *"Refreshing incomplete tailmux function managed block"* ]] || fail "expected tailmux managed block refresh"
+  assert_contains "$tmp/home/.profile" '_tailmux_resolve_target\(\)'
+  assert_contains "$tmp/home/.profile" '_tailmux_doctor\(\)'
+  pass "stale tailmux refresh"
+}
+
 test_stale_taildrive_refresh() {
   local tmp
   local fake_bin
@@ -560,6 +586,7 @@ main() {
   test_syntax_checks
   test_loader_missing_module_fails
   test_install_idempotent
+  test_stale_tailmux_refresh
   test_stale_taildrive_refresh
   test_taildrive_legacy_get_os_name_refresh
   test_uninstall_removes_blocks

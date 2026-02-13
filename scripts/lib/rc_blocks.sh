@@ -9,6 +9,19 @@ tailmux_function_installed() {
   rc_has_shell_function "tailmux"
 }
 
+tailmux_function_up_to_date() {
+  if ! tailmux_function_installed; then
+    return 1
+  fi
+  if ! grep -Fq "_tailmux_resolve_target()" "$RC_FILE" 2>/dev/null; then
+    return 1
+  fi
+  if ! grep -Fq "_tailmux_doctor()" "$RC_FILE" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
 taildrive_functions_installed() {
   local os_name
   if ! rc_has_shell_function "tailshare" || ! rc_has_shell_function "tailunshare" || ! rc_has_shell_function "tailshare-ls"; then

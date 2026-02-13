@@ -26,11 +26,13 @@ Before connecting, make sure remote access is enabled on the destination:
 
 ```bash
 tailmux <host>
+tailmux doctor <host>
 ```
 
 Connects to the host over Tailscale and attaches to an existing tmux session (or creates a new one).
 
 - `hostname` - Tailscale device name or IP
+- `doctor` - run resolver diagnostics for a host
 
 **Tip:** Use `tailscale status` to list all devices with their hostnames and IPs - handy for troubleshooting connection issues.
 
@@ -39,7 +41,28 @@ Connects to the host over Tailscale and attaches to an existing tmux session (or
 ```bash
 tailmux macbook-pro       # connect by device name
 tailmux 100.101.102.103   # connect by your Tailscale IP (from `tailscale status`)
+tailmux doctor home       # diagnose host resolution path for `home`
 ```
+
+### DNS-robust host resolution
+
+`tailmux` resolves hosts in this order to reduce breakage when short-name DNS is unreliable on some macOS/Tailscale combinations:
+
+1. Direct IP input
+2. `tailscale status --json` (device hostname / short name / FQDN)
+3. `tailscale dns query` against your tailnet suffix
+4. Optional LAN fallback (`<host>.local`) when `TAILMUX_LAN_FALLBACK=1`
+5. System DNS lookup
+
+Optional alias file:
+
+- Path: `~/.config/tailmux/hosts` (override with `TAILMUX_HOSTS_FILE`)
+- Format: `<alias> <target>`
+- Example:
+  ```text
+  home 100.64.0.10
+  mini mini.example-tailnet.ts.net
+  ```
 
 ## File Sharing (Taildrive)
 
@@ -219,6 +242,10 @@ sudo tailscale up --ssh
   - `sudo rm -f /Library/LaunchDaemons/homebrew.mxcl.tailscale.plist`
   - `sudo brew services start tailscale`
 - **Authentication**: Run `tailscale up` to authenticate (opens browser). If you hit a permissions error, retry with `sudo tailscale up`.
+- **Name resolves by IP only / short hostnames fail**:
+  - Run: `tailmux doctor <hostname>`
+  - Run: `tailscale dns status --all`
+  - If needed, use `TAILMUX_LAN_FALLBACK=1` or add a stable alias in `~/.config/tailmux/hosts`
 - **Switching from GUI app**: Setup can auto-remove Homebrew cask installs during migration. Standalone/App Store installs must be removed from Applications before setup will install the Homebrew formula.
 - See: [Taildrive docs](https://tailscale.com/kb/1369/taildrive) and [macOS variants](https://tailscale.com/kb/1065/macos-variants)
 

@@ -6,7 +6,7 @@ install_shell_function() {
     "tailmux function" \
     "$TAILMUX_BLOCK_BEGIN" \
     "$TAILMUX_BLOCK_END" \
-    "tailmux_function_installed" || prepare_status=$?
+    "tailmux_function_up_to_date" || prepare_status=$?
   if [[ "$prepare_status" == "10" ]]; then
     return 0
   fi
@@ -114,9 +114,12 @@ do_install() {
     install_list+="  - tmux (terminal multiplexer)\n"
     needs_install=true
   fi
+  local tailmux_refresh_needed=false
   if ! tailmux_function_installed; then
     install_list+="  - tailmux shell function (added to $RC_FILE)\n"
     needs_install=true
+  elif ! tailmux_function_up_to_date; then
+    tailmux_refresh_needed=true
   fi
   local taildrive_missing=false
   local taildrive_refresh_needed=false
@@ -128,6 +131,9 @@ do_install() {
   if [[ "$needs_install" == false ]]; then
     local taildrive_installed_now=false
     print_success "Core setup is already installed!"
+    if [[ "$tailmux_refresh_needed" == true ]]; then
+      install_shell_function
+    fi
     if [[ "$os_name" == "Linux" ]]; then
       if command_exists tailscale; then
         ensure_linux_tailscale_operator "$os_name"
@@ -160,6 +166,7 @@ do_install() {
       fi
     fi
     echo "Usage: tailmux <hostname>"
+    echo "       tailmux doctor <hostname>"
     if [[ "$taildrive_installed_now" == true || "$taildrive_missing" == false ]]; then
       echo ""
       print_taildrive_help
@@ -219,6 +226,7 @@ do_install() {
     echo "  2. Ensure SSH is enabled on the destination (macOS: Remote Login)"
     echo "  3. Open a new Terminal window, or run: source $RC_FILE"
     echo "  4. Connect: tailmux <hostname>"
+    echo "     Diagnose resolution issues: tailmux doctor <hostname>"
   fi
   if [[ "$taildrive_installed" == true ]]; then
     echo ""
