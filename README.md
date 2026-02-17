@@ -106,10 +106,10 @@ For troubleshooting connection issues, Tailscale on macOS, and Linux mounts, see
 | OS | Package Manager | Remote Access Mode |
 |----|-----------------|--------------------|
 | macOS | Homebrew | Tailscale SSH |
-| Debian/Ubuntu | apt | Tailscale SSH (no OpenSSH required) |
-| Fedora | dnf | Tailscale SSH (no OpenSSH required) |
-| RHEL/CentOS | yum | Tailscale SSH (no OpenSSH required) |
-| Arch Linux | pacman | Tailscale SSH (no OpenSSH required) |
+| Debian/Ubuntu | apt | Tailscale SSH |
+| Fedora | dnf | Tailscale SSH |
+| RHEL/CentOS | yum | Tailscale SSH |
+| Arch Linux | pacman | Tailscale SSH |
 | Windows | - | Use WSL |
 
 ## Uninstall

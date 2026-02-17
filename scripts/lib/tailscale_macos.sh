@@ -212,7 +212,7 @@ install_tailscale_macos() {
     return 1
   fi
   print_success "Tailscale ready (open-source CLI version)"
-  print_warning "Authenticate with: tailscale up (use sudo only if needed)"
+  print_warning "Authenticate with: sudo tailscale up --ssh"
   print_warning "Note: This version has no menu bar icon. Manage via CLI: tailscale status, tailscale up/down"
 }
 

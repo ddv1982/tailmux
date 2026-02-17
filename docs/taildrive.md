@@ -156,12 +156,7 @@ tailscale down            # Disconnect
 tailscale drive list      # List shares
 ```
 
-After installation, authenticate once with:
-```bash
-tailscale up
-```
-
-On Linux, include `--ssh`:
+After installation, authenticate and enable Tailscale SSH:
 ```bash
 sudo tailscale up --ssh
 ```
