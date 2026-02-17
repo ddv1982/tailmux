@@ -2,25 +2,42 @@
 
 Access tmux sessions on your Tailscale devices from anywhere.
 
+```bash
+tailmux macbook-pro       # connect by device name
+tailmux 100.101.102.103   # connect by Tailscale IP
+```
+
+## Contents
+
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Setup Commands](#setup-commands)
+- [Usage](#usage)
+- [File Sharing (Taildrive)](#file-sharing-taildrive)
+- [Supported Platforms](#supported-platforms)
+- [Uninstall](#uninstall)
+- [Notes](#notes)
+- [Development](#development)
+
+## Prerequisites
+
+- bash and curl
+- A [Tailscale](https://tailscale.com) account
+- Remote access enabled on the destination:
+  - macOS: System Settings > General > Sharing > Remote Login
+  - Linux: `sudo tailscale up --ssh` (no OpenSSH daemon required)
+
 ## Quick Start
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.sh)
 ```
 
-This will prompt you to:
-- Install Homebrew (macOS only, if not already installed)
-- Install Tailscale
-- Install tmux
-- Add the `tailmux` command to your shell
-- On Linux, configure Tailscale operator access for your current user (so `tailscale up` works without `sudo`)
-- On Linux, enable Tailscale SSH on this device (`tailscale set --ssh`)
-- Optionally install Taildrive (`tailshare`/`tailmount`) shell functions
-- On Linux, optionally install `davfs2` when enabling Taildrive mounts
-
-Before connecting, make sure remote access is enabled on the destination:
-- macOS: System Settings → General → Sharing → Remote Login
-- Linux: `sudo tailscale up --ssh` (no OpenSSH daemon required)
+This will:
+- Install Tailscale and tmux (Homebrew on macOS, system package manager on Linux)
+- Add the `tailmux` shell function
+- On Linux, configure Tailscale operator access and enable Tailscale SSH
+- Optionally install [Taildrive](#file-sharing-taildrive) shell functions
 
 ## Setup Commands
 
@@ -28,62 +45,33 @@ Before connecting, make sure remote access is enabled on the destination:
 bash setup.sh install    # install/configure everything
 bash setup.sh uninstall  # remove shell functions and optionally Tailscale state
 bash setup.sh update     # check for and apply package updates
+bash setup.sh --help     # show all options
 ```
 
-## Dependency Version Policy
-
-Dependency upgrade policy is centralized in:
-
-- `scripts/lib/dependency_policy.sh`
-
-All managed packages (`tailscale`, `tmux`, `davfs2`) always track the latest stable version. The Tailscale install track can be changed:
-
-```bash
-# Default track (stable or unstable)
-TAILMUX_TAILSCALE_TRACK=stable
-```
-
-Use `setup.sh update` to check for and apply available updates.
+All managed packages (`tailscale`, `tmux`, `davfs2`) track the latest stable version. Set `TAILMUX_TAILSCALE_TRACK=unstable` to follow the unstable channel.
 
 ## Usage
 
 ```bash
-tailmux <host>
-tailmux doctor <host>
+tailmux <host>            # connect and attach/create tmux session
+tailmux doctor <host>     # run resolver diagnostics
+tailmux --help            # show usage
+tailmux --version         # show version
 ```
 
-Connects to the host over Tailscale and attaches to an existing tmux session (or creates a new one).
-
-### Updating
-
-Check for and apply updates to all managed packages:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.sh) update
-```
-
-Or with local modules:
-
-```bash
-TAILMUX_USE_LOCAL_MODULES=1 bash setup.sh update
-```
-
-- `hostname` - Tailscale device name or IP
-- `doctor` - run resolver diagnostics for a host
-
-**Tip:** Use `tailscale status` to list all devices with their hostnames and IPs - handy for troubleshooting connection issues.
+**Tip:** Use `tailscale status` to list all devices with their hostnames and IPs.
 
 **Examples:**
 
 ```bash
 tailmux macbook-pro       # connect by device name
-tailmux 100.101.102.103   # connect by your Tailscale IP (from `tailscale status`)
-tailmux doctor home       # diagnose host resolution path for `home`
+tailmux 100.101.102.103   # connect by Tailscale IP
+tailmux doctor home       # diagnose resolution for "home"
 ```
 
-### DNS-robust host resolution
+### Host Resolution Order
 
-`tailmux` resolves hosts in this order to reduce breakage when short-name DNS is unreliable on some macOS/Tailscale combinations:
+`tailmux` resolves hosts in this order to handle cases where short-name DNS is unreliable:
 
 1. Direct IP input
 2. User alias file (`~/.config/tailmux/hosts`)
@@ -92,7 +80,7 @@ tailmux doctor home       # diagnose host resolution path for `home`
 5. Optional LAN fallback (`<host>.local`) when `TAILMUX_LAN_FALLBACK=1`
 6. System DNS lookup
 
-Optional alias file:
+### Alias File
 
 - Path: `~/.config/tailmux/hosts` (override with `TAILMUX_HOSTS_FILE`)
 - Format: `<alias> <target>`
@@ -104,203 +92,16 @@ Optional alias file:
 
 ## File Sharing (Taildrive)
 
-Share directories between Tailscale devices using [Taildrive](https://tailscale.com/docs/features/taildrive), Tailscale's built-in WebDAV file sharing. Useful for accessing project files on a remote machine with local editors and tools.
-
-Both Linux and macOS can manage shares via CLI (`tailshare`, `tailshare-ls`) and mount shares (`tailmount`).
-
-**Note for macOS:** This installer uses the open-source Homebrew `tailscale` formula (CLI-only, no menu bar icon) to enable full `tailscale drive` CLI support. If a standalone/App Store install is detected, setup now stops and asks you to remove it first to avoid conflicts. If you prefer the GUI app, see [Tailscale macOS variants](https://tailscale.com/kb/1065/macos-variants), but note that GUI apps cannot use `tailscale drive` from the command line.
-
-### One-Time Taildrive ACL Setup
-
-Taildrive requires two things in your [Tailscale ACL policy](https://login.tailscale.com/admin/acls): `nodeAttrs` to enable the feature, and a grant to define who can access which shares. Open the [Access Controls](https://login.tailscale.com/admin/acls) page and add/merge the sections below.
-
-Add the following to your ACL policy. If your policy already has `nodeAttrs` or `grants`, merge the entries into the existing arrays — do not add duplicate top-level keys.
-
-<details>
-<summary>Add to <code>nodeAttrs</code></summary>
-
-```jsonc
-{
-  // Any device can access shared directories with Taildrive
-  "target": ["*"],
-  "attr": ["drive:access"]
-},
-{
-  // Only tailnet admins can use Taildrive to share directories
-  "target": ["autogroup:admin"],
-  "attr": ["drive:share", "drive:access"]
-}
-```
-
-- `drive:share` — permission to create and manage shared folders
-- `drive:access` — permission to access shared folders from other devices
-
-</details>
-
-<details>
-<summary>Add to <code>grants</code></summary>
-
-Your `grants` array likely already has `ip`-based network grants. The Taildrive entry uses `app` instead of `ip` — they don't overlap, so keep your existing entries and append the Taildrive grant:
-
-```jsonc
-"grants": [
-    // your existing network grants
-    {
-        "src": ["*"],
-        "dst": ["*"],
-        "ip":  ["*"],
-    },
-    {
-        "src": ["autogroup:member"],
-        "dst": ["autogroup:member"],
-        "ip":  ["*"],
-    },
-    // Taildrive: members can read/write all shares on their own devices
-    {
-        "src": ["autogroup:member"],
-        "dst": ["autogroup:self"],
-        "app": {
-            "tailscale.com/cap/drive": [
-                { "shares": ["*"], "access": "rw" }
-            ]
-        }
-    },
-],
-```
-
-</details>
-
-<details>
-<summary>Customize the Taildrive grant</summary>
-
-| Field | Example | Description |
-|-------|---------|-------------|
-| `src` | `["autogroup:member"]`, `["group:devs"]` | Who can access |
-| `dst` | `["autogroup:self"]`, `["tag:fileserver"]`, `["*"]` | Whose shares to access |
-| `shares` | `["*"]`, `["projects", "docs"]` | Which share names (`*` = all) |
-| `access` | `"rw"`, `"ro"` | Read-write or read-only |
-
-</details>
-
-After saving the policy, verify with:
+Share directories between devices using [Taildrive](https://tailscale.com/docs/features/taildrive):
 
 ```bash
-tailscale drive list
-```
-
-See the [Taildrive docs](https://tailscale.com/docs/features/taildrive) and [grants app capabilities](https://tailscale.com/kb/1537/grants-app-capabilities) for more details.
-
-### Usage
-
-```bash
-# On the machine with your files (e.g. Linux laptop):
 tailshare myproject ~/projects/myapp     # share a directory
-tailshare-ls                             # list active shares
-
-# On another machine (macOS or Linux):
-tailmount linux-laptop myproject         # mount the share
-# → Mounted at ~/taildrive/linux-laptop/myproject
-
-tailmount-ls                             # list mounted shares
-tailumount linux-laptop myproject        # unmount
+tailmount linux-laptop myproject         # mount on another machine
 ```
 
-```bash
-# Stop sharing when done:
-tailunshare myproject
-```
+For ACL setup, commands reference, and macOS CLI details, see [docs/taildrive.md](docs/taildrive.md).
 
-### Finding Host and Share Names
-
-If you are unsure which host/share token to use with `tailmount`, list what Taildrive currently exposes (run this on a Linux machine, or any machine where `tailscale drive` is available):
-
-```bash
-tailscale drive list
-```
-
-Use the exact `<host>/<share>` values shown there in `tailmount <host> <share>`.
-
-### Share Name Guidelines
-
-Taildrive share names should be simple and portable:
-
-- Prefer letters, numbers, and underscores.
-- Avoid spaces and special punctuation in share names.
-- If you see `invalid share`, choose a simpler name and try again.
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `tailshare <name> [path]` | Share a directory (defaults to `.`) |
-| `tailunshare <name>` | Stop sharing |
-| `tailshare-ls` | List active shares |
-| `tailmount <host> <share> [mount_point]` | Mount a share on macOS/Linux (defaults to `~/taildrive/<host>/<share>`) |
-| `tailumount <host> <share> [mount_point]` | Unmount a share |
-| `tailmount-ls` | List mounted shares |
-
-**Linux prerequisite:** Linux mounting uses `davfs2` (`mount -t davfs`). The installer can prompt to install it automatically when you enable Taildrive functions.
-
-### macOS: Open-Source Tailscale (CLI-only)
-
-On macOS, this installer uses the Homebrew `tailscale` formula — the open-source CLI-only version. This enables full `tailscale drive` CLI support but has some trade-offs:
-
-| Feature | Open-Source (Homebrew) | GUI App (Standalone/App Store) |
-|---------|------------------------|--------------------------------|
-| Menu bar icon | No | Yes |
-| `tailscale drive` CLI | **Yes** | No |
-| Auto-configured MagicDNS | Manual | Auto |
-| Manage via | Terminal commands | GUI + limited CLI |
-
-**Common commands:**
-```bash
-tailscale status          # Check connection status
-tailscale up              # Connect to tailnet
-tailscale down            # Disconnect
-tailscale drive list      # List shares
-```
-
-After installation, authenticate once with:
-```bash
-tailscale up
-```
-
-On Linux, include `--ssh`:
-```bash
-sudo tailscale up --ssh
-```
-
-### Troubleshooting Tailscale on macOS
-
-- **"tailscale: command not found"**: Ensure Homebrew's bin is in your PATH (`brew shellenv`), then run `brew link tailscale` to recreate CLI symlinks if needed.
-- **"Is Tailscale running?"**: Start the daemon with `sudo brew services start tailscale` (sudo required for root privileges).
-- **"failed to connect to local Tailscale service"**: Restart daemon with `sudo brew services restart tailscale`. If it still fails, remove stale artifacts and retry:
-  - `rm -f /opt/homebrew/var/log/tailscaled.log`
-  - `rm -f ~/Library/LaunchAgents/homebrew.mxcl.tailscale.plist`
-  - `sudo rm -f /Library/LaunchDaemons/homebrew.mxcl.tailscale.plist`
-  - `sudo brew services start tailscale`
-- **Authentication**: Run `tailscale up` to authenticate (opens browser). If you hit a permissions error, retry with `sudo tailscale up`.
-- **Name resolves by IP only / short hostnames fail**:
-  - Run: `tailmux doctor <hostname>`
-  - Run: `tailscale dns status --all`
-  - If needed, use `TAILMUX_LAN_FALLBACK=1` or add a stable alias in `~/.config/tailmux/hosts`
-- **Switching from GUI app**: Setup can auto-remove Homebrew cask installs during migration. Standalone/App Store installs must be removed from Applications before setup will install the Homebrew formula.
-- See: [Taildrive docs](https://tailscale.com/kb/1369/taildrive) and [macOS variants](https://tailscale.com/kb/1065/macos-variants)
-
-### Troubleshooting Linux Mounts
-
-- If `tailmount` fails with `mount.davfs` missing, install `davfs2`:
-  - Debian/Ubuntu: `sudo apt-get update -y && sudo apt-get install -y davfs2`
-  - Fedora: `sudo dnf install -y davfs2`
-  - RHEL/CentOS: `sudo yum install -y davfs2`
-  - Arch: `sudo pacman -S --noconfirm davfs2`
-- If mount/unmount requires elevated privileges, `tailmount`/`tailumount` will retry with `sudo`.
-
-## Uninstall
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.sh) uninstall
-```
+For troubleshooting connection issues, Tailscale on macOS, and Linux mounts, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Supported Platforms
 
@@ -313,6 +114,12 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.s
 | Arch Linux | pacman | Tailscale SSH (no OpenSSH required) |
 | Windows | - | Use WSL |
 
+## Uninstall
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.sh) uninstall
+```
+
 ## Notes
 
 - Your tailnet ACLs must allow remote access for your chosen mode:
@@ -322,22 +129,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.s
 
 ## Development
 
-`setup.sh` is a thin entrypoint that loads modules from `scripts/lib`:
-
-- `constants.sh`
-- `dependency_policy.sh`
-- `ui.sh`
-- `platform.sh`
-- `taildrive_templates.sh`
-- `rc_blocks.sh`
-- `managed_blocks.sh`
-- `package_manager.sh`
-- `tailscale_macos.sh`
-- `packages.sh`
-- `update.sh`
-- `install.sh`
-- `uninstall.sh`
-- `cli.sh`
+`setup.sh` loads modules from `scripts/lib/`: `constants.sh`, `dependency_policy.sh`, `ui.sh`, `platform.sh`, `taildrive_templates.sh`, `rc_blocks.sh`, `managed_blocks.sh`, `package_manager.sh`, `tailscale_macos.sh`, `packages.sh`, `update.sh`, `install.sh`, `uninstall.sh`, `cli.sh`.
 
 Run smoke tests:
 
@@ -345,7 +137,7 @@ Run smoke tests:
 bash scripts/tests/smoke.sh
 ```
 
-By default, `setup.sh` fetches the latest module set from GitHub `main`. For local module development, set:
+For local module development:
 
 ```bash
 TAILMUX_USE_LOCAL_MODULES=1 bash setup.sh install

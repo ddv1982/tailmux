@@ -19,6 +19,10 @@ tailmux_function_up_to_date() {
   if ! grep -Fq "_tailmux_doctor()" "$RC_FILE" 2>/dev/null; then
     return 1
   fi
+  if ! grep -Fq '_tailmux_usage' "$RC_FILE" 2>/dev/null || \
+     ! grep -Fq -- '--version' "$RC_FILE" 2>/dev/null; then
+    return 1
+  fi
   return 0
 }
 

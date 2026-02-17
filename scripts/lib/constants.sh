@@ -6,11 +6,30 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
+# Version: read from VERSION file if available, fall back to embedded default
+_tailmux_version_file="${BASH_SOURCE[0]%/*}/../../VERSION"
+if [[ -f "$_tailmux_version_file" ]]; then
+  read -r TAILMUX_VERSION < "$_tailmux_version_file"
+else
+  TAILMUX_VERSION="0.1.0"
+fi
+unset _tailmux_version_file
+
 TAILMUX_FUNC="$(cat <<'EOF'
 tailmux() {
   _tailmux_usage() {
-    echo "Usage: tailmux <host-or-ip>" >&2
-    echo "       tailmux doctor <host-or-ip>" >&2
+    echo "tailmux __TAILMUX_VERSION__ — attach to tmux sessions on Tailscale devices"
+    echo ""
+    echo "Usage: tailmux <host-or-ip>"
+    echo "       tailmux doctor <host-or-ip>"
+    echo ""
+    echo "Commands:"
+    echo "  <host-or-ip>   Connect to host and attach/create tmux session"
+    echo "  doctor <host>  Run resolver diagnostics for a host"
+    echo ""
+    echo "Options:"
+    echo "  --help, -h     Show this help message"
+    echo "  --version, -V  Show version"
   }
 
   _tailmux_has_cmd() {
@@ -317,8 +336,17 @@ PY
   }
 
   if [[ -z "${1:-}" ]]; then
-    _tailmux_usage
+    _tailmux_usage >&2
     return 1
+  fi
+
+  if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+    _tailmux_usage
+    return 0
+  fi
+  if [[ "$1" == "--version" || "$1" == "-V" ]]; then
+    echo "tailmux __TAILMUX_VERSION__"
+    return 0
   fi
 
   if [[ "$1" == "doctor" ]]; then
@@ -349,6 +377,7 @@ PY
 }
 EOF
 )"
+TAILMUX_FUNC="${TAILMUX_FUNC//__TAILMUX_VERSION__/$TAILMUX_VERSION}"
 TAILMUX_BLOCK_BEGIN="# >>> tailmux managed block (tailmux) >>>"
 TAILMUX_BLOCK_END="# <<< tailmux managed block (tailmux) <<<"
 TAILDRIVE_BLOCK_BEGIN="# >>> tailmux managed block (taildrive) >>>"
