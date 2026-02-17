@@ -42,7 +42,11 @@ resolve_script_dir() {
     [[ "$source" != /* ]] && source="$source_dir/$source"
   done
 
-  resolved_dir="$(cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd || true)"
+  if resolved_dir="$(cd -P "$(dirname "$source")" >/dev/null 2>&1 && pwd)"; then
+    :
+  else
+    resolved_dir=""
+  fi
   echo "$resolved_dir"
 }
 
