@@ -107,16 +107,13 @@ PY
       return 0
     fi
 
-    tailscale status 2>/dev/null | awk -v target="$host_lc" '
-      BEGIN { target=tolower(target); }
-      NF >= 2 {
-        name=tolower($2)
-        if (name == target) {
-          print $1
-          exit
-        }
-      }
-    '
+    tailscale status 2>/dev/null | tr '[:upper:]' '[:lower:]' | while read -r ip name _; do
+      [[ -z "$name" ]] && continue
+      if [[ "$name" == "$host_lc" ]]; then
+        printf '%s\n' "$ip"
+        break
+      fi
+    done
   }
 
   _tailmux_dns_query_a() {
@@ -124,7 +121,9 @@ PY
     if ! _tailmux_has_cmd tailscale; then
       return 1
     fi
-    tailscale dns query "$name" a 2>/dev/null | awk '/TypeA/{print $NF; exit}'
+    tailscale dns query "$name" a 2>/dev/null | while read -r line; do
+      if [[ "$line" == *TypeA* ]]; then printf '%s\n' "${line##* }"; break; fi
+    done
   }
 
   _tailmux_system_lookup_ip() {
@@ -132,7 +131,7 @@ PY
     local ip=""
 
     if _tailmux_has_cmd getent; then
-      ip="$(getent ahostsv4 "$name" 2>/dev/null | awk '{print $1; exit}')"
+      ip="$(getent ahostsv4 "$name" 2>/dev/null | { read -r ip _; printf '%s\n' "$ip"; })"
       if [[ -n "$ip" ]]; then
         printf '%s\n' "$ip"
         return 0
@@ -140,7 +139,9 @@ PY
     fi
 
     if _tailmux_has_cmd dscacheutil; then
-      ip="$(dscacheutil -q host -a name "$name" 2>/dev/null | awk '/^ip_address:/{print $2; exit}')"
+      ip="$(dscacheutil -q host -a name "$name" 2>/dev/null | while read -r key val _; do
+        [[ "$key" == "ip_address:" ]] && { printf '%s\n' "$val"; break; }
+      done)"
       if [[ -n "$ip" ]]; then
         printf '%s\n' "$ip"
         return 0
@@ -148,7 +149,15 @@ PY
     fi
 
     if _tailmux_has_cmd nslookup; then
-      ip="$(nslookup "$name" 2>/dev/null | awk '/^Name:/{seen=1; next} seen && /^Address: /{print $2; exit}')"
+      ip="$(nslookup "$name" 2>/dev/null | while IFS= read -r line; do
+        if [[ "$line" == Name:* ]]; then
+          seen=1
+        elif [[ "$line" == 'Address: '* && "${seen:-}" == 1 ]]; then
+          read -r _ ip <<< "$line"
+          printf '%s\n' "$ip"
+          break
+        fi
+      done)"
       if [[ -n "$ip" ]]; then
         printf '%s\n' "$ip"
         return 0
@@ -168,17 +177,15 @@ PY
     fi
 
     host_lc="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
-    awk -v key="$host_lc" '
-      /^[[:space:]]*#/ { next }
-      NF < 2 { next }
-      {
-        lhs=tolower($1)
-        if (lhs == key) {
-          print $2
-          exit
-        }
-      }
-    ' "$hosts_file"
+    while read -r lhs rhs _ || [[ -n "$lhs" ]]; do
+      [[ "$lhs" == '#'* || -z "$lhs" ]] && continue
+      [[ -z "$rhs" ]] && continue
+      lhs="$(printf '%s' "$lhs" | tr '[:upper:]' '[:lower:]')"
+      if [[ "$lhs" == "$host_lc" ]]; then
+        printf '%s\n' "$rhs"
+        break
+      fi
+    done < "$hosts_file"
   }
 
   _tailmux_resolve_target() {
@@ -291,8 +298,7 @@ PY
     fi
 
     resolved="$(_tailmux_resolve_target "$host")"
-    target="$(printf '%s' "$resolved" | awk -F '\t' '{print $1}')"
-    mode="$(printf '%s' "$resolved" | awk -F '\t' '{print $2}')"
+    IFS=$'\t' read -r target mode <<< "$resolved"
     echo "  tailmux resolution: $host -> $target ($mode)"
 
     if [[ "$host" != *.* && -n "$magic_suffix" ]]; then
@@ -327,8 +333,7 @@ PY
   local mode
 
   resolved="$(_tailmux_resolve_target "$host")"
-  target="$(printf '%s' "$resolved" | awk -F '\t' '{print $1}')"
-  mode="$(printf '%s' "$resolved" | awk -F '\t' '{print $2}')"
+  IFS=$'\t' read -r target mode <<< "$resolved"
 
   if [[ -z "$target" ]]; then
     echo "tailmux: failed to resolve a destination for '$host'" >&2
