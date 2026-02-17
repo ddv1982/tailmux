@@ -35,7 +35,7 @@ Edit that file to control Tailscale upgrades from one place:
 TAILMUX_TAILSCALE_TRACK=stable
 
 # Pin Linux to an exact version
-TAILMUX_TAILSCALE_VERSION=1.88.4
+TAILMUX_TAILSCALE_VERSION=1.94.1
 
 # Or leave empty to install the latest version in the selected track
 TAILMUX_TAILSCALE_VERSION=

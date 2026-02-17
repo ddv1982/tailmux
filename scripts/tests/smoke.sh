@@ -606,15 +606,15 @@ test_linux_tailscale_policy_propagation() {
   rm -f "$fake_bin/tailscale"
   test_path="$fake_bin:/usr/bin:/bin"
 
-  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$test_path" CURL_CALLS_FILE="$curl_calls_file" TAILSCALE_INSTALL_ENV_FILE="$env_file" TAILMUX_TAILSCALE_TRACK=unstable TAILMUX_TAILSCALE_VERSION=1.88.4 TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$test_path" CURL_CALLS_FILE="$curl_calls_file" TAILSCALE_INSTALL_ENV_FILE="$env_file" TAILMUX_TAILSCALE_TRACK=unstable TAILMUX_TAILSCALE_VERSION=1.94.1 TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
 y
 n
 INP
 )"
 
-  [[ "$out" == *"Using Tailscale track 'unstable' pinned to version '1.88.4'"* ]] || fail "expected pinned policy log line"
+  [[ "$out" == *"Using Tailscale track 'unstable' pinned to version '1.94.1'"* ]] || fail "expected pinned policy log line"
   assert_contains "$env_file" '^TRACK=unstable$'
-  assert_contains "$env_file" '^TAILSCALE_VERSION=1\.88\.4$'
+  assert_contains "$env_file" '^TAILSCALE_VERSION=1\.94\.1$'
   assert_contains "$curl_calls_file" 'https://tailscale\.com/install\.sh'
   pass "linux tailscale policy propagation"
 }
@@ -660,7 +660,7 @@ test_linux_tailscale_policy_reconciles_when_installed() {
   make_fake_tailscale_installer_capture_bin "$fake_bin"
   test_path="$fake_bin:/usr/bin:/bin"
 
-  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$test_path" TAILSCALE_INSTALL_ENV_FILE="$env_file" TAILMUX_TAILSCALE_TRACK=unstable TAILMUX_TAILSCALE_VERSION=1.88.4 TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$test_path" TAILSCALE_INSTALL_ENV_FILE="$env_file" TAILMUX_TAILSCALE_TRACK=unstable TAILMUX_TAILSCALE_VERSION=1.94.1 TAILMUX_OS_OVERRIDE=Linux TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
 y
 n
 INP
@@ -669,7 +669,7 @@ INP
   [[ "$out" == *"Reconciling installed Tailscale with dependency policy"* ]] || fail "expected reconcile message for preinstalled tailscale"
   [[ "$out" == *"Tailscale policy reconciliation complete"* ]] || fail "expected reconciliation completion message"
   assert_contains "$env_file" '^TRACK=unstable$'
-  assert_contains "$env_file" '^TAILSCALE_VERSION=1\.88\.4$'
+  assert_contains "$env_file" '^TAILSCALE_VERSION=1\.94\.1$'
   pass "linux tailscale policy reconciliation when installed"
 }
 
@@ -831,13 +831,13 @@ test_macos_tailscale_version_pin_warning() {
   mkdir -p "$fake_bin" "$tmp/home"
   make_fake_macos_bin "$fake_bin" "$brew_prefix"
 
-  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" BREW_PREFIX="$brew_prefix" TAILMUX_TAILSCALE_VERSION=1.88.4 TAILMUX_OS_OVERRIDE=Darwin TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
+  out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" BREW_PREFIX="$brew_prefix" TAILMUX_TAILSCALE_VERSION=1.94.1 TAILMUX_OS_OVERRIDE=Darwin TAILMUX_USE_LOCAL_MODULES=1 bash "$SETUP_SCRIPT" install <<'INP'
 y
 n
 INP
 )"
 
-  [[ "$out" == *"Pinned Tailscale version '1.88.4' is Linux-only in this installer."* ]] || fail "expected macOS pin warning"
+  [[ "$out" == *"Pinned Tailscale version '1.94.1' is Linux-only in this installer."* ]] || fail "expected macOS pin warning"
   [[ "$out" == *"Tailscale already installed (Homebrew formula)"* ]] || fail "expected mocked macOS formula path"
   [[ "$out" == *"Setup complete!"* ]] || fail "expected mocked macOS setup completion"
   pass "macOS tailscale pin warning"
