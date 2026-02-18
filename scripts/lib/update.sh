@@ -302,7 +302,7 @@ do_update() {
       print_success "$package upgraded"
     else
       print_error "Failed to upgrade $package"
-      ((failures++))
+      ((++failures))
     fi
   done
 
