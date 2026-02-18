@@ -128,11 +128,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.s
 
 `setup.sh` loads modules from `scripts/lib/`: `constants.sh`, `dependency_policy.sh`, `ui.sh`, `platform.sh`, `taildrive_templates.sh`, `rc_blocks.sh`, `managed_blocks.sh`, `package_manager.sh`, `tailscale_macos.sh`, `packages.sh`, `update.sh`, `install.sh`, `uninstall.sh`, `cli.sh`.
 
-Run smoke tests:
+Run tests:
 
 ```bash
-bash scripts/tests/smoke.sh
+bash scripts/tests/run.sh lint    # syntax + shellcheck
+bash scripts/tests/run.sh quick   # required core regression suites
+bash scripts/tests/run.sh full    # core + extended regression suites
+bash scripts/tests/smoke.sh       # compatibility wrapper (runs full)
 ```
+
+CI uses required checks (`lint`, `core-linux`, `core-macos`) and advisory extended checks (`extended-linux`, `extended-macos`).
 
 For local module development:
 

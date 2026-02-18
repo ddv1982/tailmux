@@ -1,24 +1,60 @@
 name: CI
+
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  smoke-tests:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install shellcheck
-        run: |
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq && sudo apt-get install -y shellcheck
-          elif command -v brew >/dev/null 2>&1; then
-            brew install shellcheck
-          fi
-      - name: Run smoke tests
-        run: bash scripts/tests/smoke.sh
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: Run lint suite
+        run: bash scripts/tests/run.sh lint
+
+  core-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run core suites (Linux)
+        run: bash scripts/tests/run.sh quick
+
+  core-macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run core suites (macOS)
+        run: bash scripts/tests/run.sh quick
+
+  extended-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: Run extended suites (Linux advisory)
+        run: bash scripts/tests/run.sh full
+
+  extended-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: brew install shellcheck
+      - name: Run extended suites (macOS advisory)
+        run: bash scripts/tests/run.sh full
