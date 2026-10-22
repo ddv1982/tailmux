@@ -31,7 +31,7 @@ gh attestation verify SNAPSHOT \
 
 Failure rejects the package. There is no checksum-only or unsigned fallback. Repository, signer, source, hosted-runner identity, and artifact digest are constrained through GitHub's standard SLSA attestation verification. The trusted checkout, installed `gh`, Python, host, and independent expected identity remain prerequisites.
 
-After successful attestation verification, the tool accepts only the canonical `tailmux-portable-v1` USTAR layout. It bounds expanded bytes at 16 MiB, each payload at 2 MiB, and the manifest at 32 KiB. It requires exactly 15 regular members in a fixed order. It rejects extensions including PAX, GNU long names and sparse records, duplicate or colliding names, links, directories, devices, FIFOs, traversal, absolute paths, unsupported metadata, unexpected members, nonzero padding, and malformed terminators. It hashes every payload before creating the output stage or writing any payload. A new stage has mode `0700`. Existing output is never overwritten.
+After successful attestation verification, the tool accepts only the canonical `tailmux-portable-v1` USTAR layout. It bounds expanded bytes at 16 MiB, each payload at 2 MiB, and the manifest at 32 KiB. It requires exactly 20 regular members in a fixed order. It rejects extensions including PAX, GNU long names and sparse records, duplicate or colliding names, links, directories, devices, FIFOs, traversal, absolute paths, unsupported metadata, unexpected members, nonzero padding, and malformed terminators. It hashes every payload before creating the output stage or writing any payload. A new stage has mode `0700`. Existing output is never overwritten.
 
 The canonical JSON manifest records `format`, `version`, `source_sha`, and `members`. Each member record contains its exact `size` and lowercase SHA-256 `sha256`. Duplicate keys, extra fields, unexpected paths, and noncanonical encodings fail. Paths and modes are fixed by this format. `bin/tailmux` alone has mode `0755`; every other regular member, including `setup.sh`, has mode `0644`. Run `setup.sh` through Bash.
 
@@ -40,9 +40,14 @@ The manifest is followed by these payloads in order:
 ```text
 LICENSE
 README.md
+SECURITY.md
 VERSION
 bin/tailmux
+docs/acceptance.md
 docs/architecture.md
+docs/compatibility.md
+docs/dependencies.md
+docs/taildrive.md
 docs/releases.md
 docs/troubleshooting.md
 scripts/lib/cli.sh
@@ -56,9 +61,11 @@ setup.sh
 
 ## Prepare publication
 
-Publication is not authorized by this guide. The checked-in workflow contains an unconditional acceptance refusal before build, attestation, and publication. PR-04 cannot publish even after an environment is configured. Parent integration must replace that refusal with the final PR-05 evidence gate before enabling a release. Local fake-verifier tests do not satisfy that gate.
+Publication is not authorized by this guide. Release requires independently reviewed source, existing repository protections, protected environment approval, and exact acceptance evidence. Local fake-verifier tests do not satisfy those gates.
 
-The recommended PR-05 variable interface keeps `RELEASE_SOURCE_SHA` as the independently reviewed source and adds `RELEASE_ACCEPTANCE_SHA256` in the protected `release` environment. The operator sets the digest only after reviewing the exact acceptance evidence and its source. The parent-owned gate must check the retrieved evidence bytes against that digest before parsing, require their `source_sha` to equal `RELEASE_SOURCE_SHA`, and validate the acceptance schema, all required lanes, and referenced evidence digests. Missing or malformed expectations and incomplete or inconclusive evidence must reject. An immutable artifact ID may locate evidence, but it does not replace the reviewed digest. Run this gate after approval and repeated preflight, before build, attestation, or publication. This interface is a recommendation for parent integration. The current release workflow keeps an unconditional refusal in its place.
+The protected `release` environment supplies `ACCEPTANCE_SOURCE_SHA`, `ACCEPTANCE_ARTIFACT_ID`, `ACCEPTANCE_ARCHIVE_SHA256`, and `ACCEPTANCE_REQUEST_SHA256`. Its approver reviews the exact evidence and digests before approving the publisher job. An artifact ID locates bytes and does not authenticate them. The gate downloads bounded evidence, checks its approved digest before unpacking, and requires complete evidence for the exact source and merge base. Missing, stale, malformed, incomplete, or inconclusive evidence rejects before package build, attestation, or publication.
+
+The gate's successful output establishes structural completeness only. It always retains `NOT_VERIFIED`. The protected operator must independently establish real execution, native screenshots/video, performance evidence, and review truth. JSON declarations and fake fixtures cannot provide that proof. See [acceptance and protected custody](acceptance.md). At release, the reviewed source is already an ancestor of main, so its merge base with fetched main equals the source SHA. The release workflow requires that exact value in the evidence.
 
 1. Review the exact source commit. Keep `VERSION`, the binary's literal `TAILMUX_VERSION`, and the installer's literal `TAILMUX_VERSION` equal to the tag without its leading `v`. The builder checks all three without executing them.
 2. Have a repository administrator establish the existing `release` environment before running a tag workflow. Configure required reviewers, prevent self-review, disable administrator bypass, and permit only the `v*` tag deployment policy. No branch deployment policy is accepted.

@@ -5,3 +5,4 @@ droidz/
 .audit/
 __pycache__/
 *.pyc
+.venv/

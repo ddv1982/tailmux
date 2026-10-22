@@ -59,10 +59,13 @@ jobs:
         run: |
           test "$EXPECTED_SOURCE_SHA" = "$PREFLIGHT_SOURCE_SHA"
           python3 scripts/release/preflight.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" --main-sha "$REVIEWED_MAIN_SHA"
-      - name: Refuse release until acceptance is enabled
-        run: |
-          printf '%s\n' 'Release acceptance is not enabled. PR-05 must install the reviewed evidence gate.' >&2
-          exit 1
+      - name: Require operator-reviewed acceptance evidence
+        env:
+          ACCEPTANCE_SOURCE_SHA: ${{ vars.ACCEPTANCE_SOURCE_SHA }}
+          ACCEPTANCE_ARTIFACT_ID: ${{ vars.ACCEPTANCE_ARTIFACT_ID }}
+          ACCEPTANCE_ARCHIVE_SHA256: ${{ vars.ACCEPTANCE_ARCHIVE_SHA256 }}
+          ACCEPTANCE_REQUEST_SHA256: ${{ vars.ACCEPTANCE_REQUEST_SHA256 }}
+        run: python3 scripts/acceptance/release_gate.py --expected-sha "$EXPECTED_SOURCE_SHA" --expected-merge-base "$EXPECTED_SOURCE_SHA"
       - name: Build exact committed package
         run: |
           mkdir -m 700 dist

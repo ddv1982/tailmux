@@ -19,8 +19,11 @@ ACTIONLINT_SHA256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b34
 PREFLIGHT = 'python3 scripts/release/preflight.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA"'
 RECHECK = ('test "$EXPECTED_SOURCE_SHA" = "$PREFLIGHT_SOURCE_SHA"\n' + PREFLIGHT
            + ' --main-sha "$REVIEWED_MAIN_SHA"')
-ACCEPTANCE_DISABLED = ("printf '%s\\n' 'Release acceptance is not enabled. PR-05 must install the reviewed evidence gate.' >&2\n"
-                       "exit 1")
+ACCEPTANCE_GATE = ('python3 scripts/acceptance/release_gate.py --expected-sha "$EXPECTED_SOURCE_SHA" '
+                   '--expected-merge-base "$EXPECTED_SOURCE_SHA"')
+ACCEPTANCE_ENV = {key: '${{ vars.' + key + ' }}' for key in (
+    "ACCEPTANCE_SOURCE_SHA", "ACCEPTANCE_ARTIFACT_ID", "ACCEPTANCE_ARCHIVE_SHA256", "ACCEPTANCE_REQUEST_SHA256")}
+
 BUILD = ('mkdir -m 700 dist\npython3 scripts/release/package.py build --tag "$TAG" '
          '--source-sha "$EXPECTED_SOURCE_SHA" --output "dist/tailmux-${TAG}.tar.gz"')
 PUBLISH = ('gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" --repo ddv1982/tailmux '
@@ -76,17 +79,19 @@ def walk(value):
             walk(child)
 
 
-def common(document):
+def common(document, acceptance=False):
     walk(document)
     require(document.get("permissions") == {}, "Workflow permissions must default to none")
     jobs = document.get("jobs")
     require(type(jobs) is dict and jobs, "Workflow jobs missing")
     for name, job in jobs.items():
-        require(type(job) is dict and job.get("runs-on") in HOSTED,
-                f"{name} must use an explicit hosted runner")
+        matrix = acceptance and name == "validate" and job.get("runs-on") == "${{ matrix.os }}" and job.get("strategy") == {
+            "fail-fast": True, "matrix": {"os": ["ubuntu-24.04", "macos-15"]}}
+        require(type(job) is dict and (job.get("runs-on") in HOSTED or matrix),
+                f"{name} must use explicit hosted runners")
         require(type(job.get("timeout-minutes")) is int and 0 < job["timeout-minutes"] <= 30,
                 f"{name} timeout missing")
-        require("if" not in job and "strategy" not in job, f"{name} may not bypass or vary required work")
+        require("if" not in job and ("strategy" not in job or matrix), f"{name} may not bypass or vary required work")
         steps = job.get("steps")
         require(type(steps) is list and steps, f"{name} steps missing")
         for step in steps:
@@ -124,12 +129,14 @@ def validate_ci(document):
         commands = '\n'.join(step.get("run", "") for step in job["steps"])
         require("secrets." not in commands and "github.token" not in commands, "CI cannot pass credentials to code")
         if name.startswith("full-"):
-            require(any(step.get("run", "").strip() == "bash scripts/tests/run.sh full\npython3 scripts/tests/suites/release_cli.py\npython3 scripts/tests/suites/release_preflight.py"
+            require(any(step.get("run", "").strip() == ". .venv/bin/activate\nbash scripts/tests/run.sh full"
                         for step in job["steps"]),
                     "Complete platform suites must block CI")
             require(job["runs-on"] == ("macos-15" if name == "full-macos" else "ubuntu-24.04"),
                     "Both platform runners are required")
             require("jq shellcheck" in commands, "Platform tests require jq and shellcheck")
+            require(".venv/bin/python -m pip install --require-hashes -r requirements-dev.txt" in commands,
+                    "Platform tests require the reviewed development dependencies")
         else:
             install = job["steps"][1].get("run", "").strip().splitlines()
             require(len(install) == 6
@@ -187,9 +194,11 @@ def validate_release(document):
                 "EXPECTED_SOURCE_SHA": "${{ vars.RELEASE_SOURCE_SHA }}"}, "Unprivileged preflight changed")
     steps = publish["steps"]
     require(len(steps) == 7, "Publisher step sequence changed")
-    for index, command in ((1, RECHECK), (2, ACCEPTANCE_DISABLED), (3, BUILD), (6, PUBLISH)):
+    for index, command in ((1, RECHECK), (3, BUILD), (6, PUBLISH)):
         require(steps[index].get("run", "").strip() == command and "env" not in steps[index],
                 "Required repeat-check, acceptance refusal, build, attest, publish order changed")
+    require(steps[2].get("run", "").strip() == ACCEPTANCE_GATE and steps[2].get("env") == ACCEPTANCE_ENV,
+            "Exact protected acceptance gate must precede build")
     archive = "dist/tailmux-${{ needs.preflight.outputs.tag }}.tar.gz"
     require(steps[4].get("uses") == "actions/attest@" + PINS["actions/attest"] and steps[4].get("with") == {
         "subject-path": archive, "push-to-registry": False, "create-storage-record": False},
@@ -199,6 +208,60 @@ def validate_release(document):
                                         "if-no-files-found": "error", "retention-days": 7},
             "Upload must preserve the attested archive")
     require(all("env" not in steps[i] for i in (0, 4, 5)), "Action environment override forbidden")
+
+
+def validate_acceptance(document):
+    common(document, acceptance=True)
+    require("env" not in document and "defaults" not in document, "Acceptance cannot override global context")
+    event = document.get("on")
+    require(type(event) is dict and set(event) == {"workflow_dispatch"}, "Acceptance requires manual dispatch")
+    inputs = event["workflow_dispatch"].get("inputs", {})
+    require(set(inputs) == {"expected_sha", "expected_merge_base", "evidence_artifact_id", "archive_sha256", "request_sha256"}
+            and all(type(v) is dict and v.get("required") is True and v.get("type") == "string" for v in inputs.values()),
+            "Acceptance expectations must be explicit")
+    jobs = document["jobs"]
+    require(set(jobs) == {"preflight", "validate"}, "Acceptance job boundary changed")
+    preflight, validate = jobs["preflight"], jobs["validate"]
+    for job in jobs.values():
+        require(job.get("permissions") == {"contents": "read", "actions": "read"}
+                and "env" not in job and "defaults" not in job, "Acceptance must remain read-only")
+        require(job["steps"][0].get("uses") == "actions/checkout@" + PINS["actions/checkout"],
+                "Acceptance must start with pinned event checkout")
+        for step in job["steps"]:
+            require("working-directory" not in step and "shell" not in step, "Acceptance context override forbidden")
+            require("inputs." not in step.get("run", "") and "secrets." not in str(step),
+                    "Acceptance inputs must enter through environment data, without secrets")
+            if "uses" in step:
+                require(step["uses"].split("@")[0] in {"actions/checkout", "actions/upload-artifact"},
+                        "Acceptance cannot attest or publish")
+    require(preflight.get("runs-on") == "ubuntu-24.04" and "environment" not in preflight
+            and "needs" not in preflight and len(preflight["steps"]) == 3,
+            "Acceptance preflight must precede environment execution")
+    require(preflight["steps"][-1].get("run") ==
+            'python3 scripts/acceptance/preflight.py --expected-sha "$EXPECTED_SHA"'
+            and preflight["steps"][-1].get("env") == {
+                "GH_TOKEN": "${{ github.token }}", "EXPECTED_SHA": "${{ inputs.expected_sha }}"},
+            "Acceptance must check actual protection and source identity")
+    require(validate.get("needs") == "preflight" and validate.get("environment") == "acceptance"
+            and validate.get("strategy") == {"fail-fast": True, "matrix": {"os": ["ubuntu-24.04", "macos-15"]}}
+            and validate.get("runs-on") == "${{ matrix.os }}" and len(validate["steps"]) == 4,
+            "Both protected evidence-validation platforms are required")
+    require(validate["steps"][1].get("run") == "python3 scripts/tests/suites/acceptance_cli.py",
+            "Acceptance boundary tests must block")
+    require(validate["steps"][2].get("run") ==
+            'python3 scripts/acceptance/release_gate.py --expected-sha "$EXPECTED_SHA" --expected-merge-base "$EXPECTED_BASE" > acceptance-structure.json'
+            and validate["steps"][2].get("env") == {
+                "GH_TOKEN": "${{ github.token }}", "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+                "EXPECTED_BASE": "${{ inputs.expected_merge_base }}", "ACCEPTANCE_SOURCE_SHA": "${{ inputs.expected_sha }}",
+                "ACCEPTANCE_ARTIFACT_ID": "${{ inputs.evidence_artifact_id }}",
+                "ACCEPTANCE_ARCHIVE_SHA256": "${{ inputs.archive_sha256 }}",
+                "ACCEPTANCE_REQUEST_SHA256": "${{ inputs.request_sha256 }}"},
+            "Exact reviewed evidence gate and independent expectations are required")
+    upload = validate["steps"][3]
+    require(upload.get("uses") == "actions/upload-artifact@" + PINS["actions/upload-artifact"]
+            and upload.get("with", {}).get("path") == "acceptance-structure.json"
+            and upload.get("with", {}).get("if-no-files-found") == "error",
+            "Only the structural report may be uploaded")
 
 
 def main():
@@ -213,9 +276,12 @@ def main():
                 validate_ci(document)
             elif path.name == "release.yml":
                 validate_release(document)
+            elif path.name == "acceptance.yml":
+                validate_acceptance(document)
             else:
-                common(document)
-        require((directory / "ci.yml").is_file() and (directory / "release.yml").is_file(), "Required workflows missing")
+                raise ValueError("New workflows require explicit policy review")
+        require(all((directory / name).is_file() for name in ("ci.yml", "release.yml", "acceptance.yml")),
+                "Required workflows missing")
     except (ValueError, TypeError, KeyError, OSError, yaml.YAMLError) as error:
         parser.exit(1, f"Workflow policy rejected: {error}\n")
     print("Workflow policy passed. Repository settings and live acceptance require separate evidence.")
