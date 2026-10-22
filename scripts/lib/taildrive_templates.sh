@@ -116,6 +116,15 @@ SHARE_EOF
 
 # Taildrive shell functions (mounting - macOS and Linux)
 read -r -d '' TAILDRIVE_MOUNT_FUNCS <<'MOUNT_EOF' || true
+_taildrive_validate_mount_point() {
+  case "${1:-}" in
+    /*) return 0 ;;
+    *)
+      echo "Error: mount point must be an absolute path" >&2
+      return 1
+      ;;
+  esac
+}
 _taildrive_mount_darwin() {
   local url="${1:?missing mount url}"
   local mount_point="${2:?missing mount point}"
@@ -132,13 +141,13 @@ _taildrive_mount_linux() {
     return 1
   fi
   mount_err_file="$(mktemp)"
-  if mount -t davfs "$url" "$mount_point" 2>"$mount_err_file"; then
+  if mount -t davfs -- "$url" "$mount_point" 2>"$mount_err_file"; then
     rm -f "$mount_err_file"
     return 0
   fi
   if command -v sudo >/dev/null 2>&1; then
     echo "Mount needs elevated privileges on this system; retrying with sudo..."
-    if sudo mount -t davfs "$url" "$mount_point"; then
+    if sudo mount -t davfs -- "$url" "$mount_point"; then
       rm -f "$mount_err_file"
       return 0
     fi
@@ -156,18 +165,18 @@ _taildrive_mount_linux() {
 }
 _taildrive_umount_linux() {
   local mount_point="${1:?missing mount point}"
-  if umount "$mount_point" 2>/dev/null; then
+  if umount -- "$mount_point" 2>/dev/null; then
     return 0
   fi
-  if command -v fusermount >/dev/null 2>&1 && fusermount -u "$mount_point" 2>/dev/null; then
+  if command -v fusermount >/dev/null 2>&1 && fusermount -u -- "$mount_point" 2>/dev/null; then
     return 0
   fi
   if command -v sudo >/dev/null 2>&1; then
     echo "Unmount needs elevated privileges on this system; retrying with sudo..."
-    if sudo umount "$mount_point"; then
+    if sudo umount -- "$mount_point"; then
       return 0
     fi
-    if command -v fusermount >/dev/null 2>&1 && sudo fusermount -u "$mount_point"; then
+    if command -v fusermount >/dev/null 2>&1 && sudo fusermount -u -- "$mount_point"; then
       return 0
     fi
   fi
@@ -176,10 +185,11 @@ _taildrive_umount_linux() {
 tailmount() {
   local host="${1:?Usage: tailmount <host> <share> [mount_point]}"
   local share="${2:?Usage: tailmount <host> <share> [mount_point]}"
-  local mount_point="${3:-$HOME/taildrive/$host/$share}"
+  local mount_point="${3-$HOME/taildrive/$host/$share}"
   local tailnet
   local os_name
   local mount_url
+  _taildrive_validate_mount_point "$mount_point" || return 1
   if ! tailnet="$(_taildrive_magicdns_suffix)"; then
     echo "Error: Could not determine tailnet name. Is Tailscale running?" >&2
     return 1
@@ -189,7 +199,7 @@ tailmount() {
     echo "Error: Could not determine tailnet name. Is Tailscale running?" >&2
     return 1
   fi
-  if ! mkdir -p "$mount_point"; then
+  if ! mkdir -p -- "$mount_point"; then
     echo "Error: Could not create mount point '$mount_point'" >&2
     return 1
   fi
@@ -216,8 +226,9 @@ tailmount() {
 tailumount() {
   local host="${1:?Usage: tailumount <host> <share> [mount_point]}"
   local share="${2:?Usage: tailumount <host> <share> [mount_point]}"
-  local mount_point="${3:-$HOME/taildrive/$host/$share}"
+  local mount_point="${3-$HOME/taildrive/$host/$share}"
   local os_name
+  _taildrive_validate_mount_point "$mount_point" || return 1
   os_name="$(_taildrive_get_os_name)"
   case "$os_name" in
     Darwin)

@@ -24,7 +24,8 @@ tailmux 100.101.102.103   # connect by Tailscale IP
 
 - bash and curl
 - A [Tailscale](https://tailscale.com) account
-- Tailscale SSH enabled on the destination: `sudo tailscale up --ssh`
+- An SSH service reachable at the destination, with access permitted for your account
+- tmux available in the remote account's noninteractive shell PATH
 
 ## Quick Start
 
@@ -106,11 +107,11 @@ For troubleshooting connection issues, Tailscale on macOS, and Linux mounts, see
 
 | OS | Package Manager | Remote Access Mode |
 |----|-----------------|--------------------|
-| macOS | Homebrew | Tailscale SSH |
-| Debian/Ubuntu | apt | Tailscale SSH |
-| Fedora | dnf | Tailscale SSH |
-| RHEL/CentOS | yum | Tailscale SSH |
-| Arch Linux | pacman | Tailscale SSH |
+| macOS | Homebrew | OpenSSH client |
+| Debian/Ubuntu | apt | OpenSSH client |
+| Fedora | dnf | OpenSSH client |
+| RHEL/CentOS | yum | OpenSSH client |
+| Arch Linux | pacman | OpenSSH client |
 | Windows | - | Use WSL |
 
 ## Uninstall
@@ -121,8 +122,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.s
 
 ## Notes
 
-- All connections use [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) — no exposed port 22 or system SSH daemon required on any platform
-- Your tailnet ACLs must allow Tailscale SSH access (all platforms use Tailscale SSH policy)
+- `tailmux` invokes the local OpenSSH `ssh` client. [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) applies when the destination runs that server and tailnet policy permits access. Other destinations require their own SSH service and access controls.
+- The legacy resolver accepts direct IPs and aliases, falls back to system DNS, and passes unresolved names to SSH. It does not enforce tailnet membership. Check the reported destination before connecting.
+- SSH host-key verification follows your OpenSSH configuration. Keep host-key checking enabled.
+- The remote account owns executable discovery. Configure its noninteractive shell PATH so `command -v tmux` succeeds. Tailmux does not copy the local PATH or add package-manager directories on the destination.
 - You can set simpler machine names in the [Tailscale admin console](https://login.tailscale.com/admin/machines) by clicking on a device and editing its name
 
 ## Development
