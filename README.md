@@ -43,7 +43,8 @@ Setup never installs packages, changes apps or services, enables servers, assign
 ```
 
 Connect accepts exactly one selector, optionally prefixed with `user@`.
-Doctor without a selector reports basic local versions.
+Doctor without a selector reports active local paths, separate CLI and daemon versions, and a dated dependency-policy classification.
+Vendor patch status remains unknown without build-specific evidence. See [the dependency policy](docs/dependencies.md).
 Doctor with a selector resolves it without SSH.
 Help and version work offline without dependencies.
 Extra options, remote commands, session names, and SSH flags are rejected.

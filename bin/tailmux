@@ -34,19 +34,135 @@ if [[ $# == 1 ]]; then
   [[ -n "$selector" && "$selector" != -* && "$selector" != *[!A-Za-z0-9.:_-]* ]] || fail 'invalid-request: invalid selector' 2
 fi
 
-if [[ "$mode" == doctor && -z "$selector" ]]; then
-  printf 'tailmux %s\nBash %s\n' "$TAILMUX_VERSION" "$BASH_VERSION"
-  for dependency in jq tailscale ssh; do
-    if ! command -v "$dependency" >/dev/null 2>&1; then
-      printf '%s unavailable\n' "$dependency"
-    else
-      case "$dependency" in
-        jq) jq --version ;;
-        tailscale) tailscale version ;;
-        ssh) ssh -V ;;
-      esac
-    fi
+doctor_probe() {
+  local output probe_status
+  output=$(
+    if [[ "$1" == ssh ]]; then "$@" 2>&1; else "$@" 2>/dev/null; fi |
+      head -c 65537 | tr '\000' '\001'
+    probe_status=$?
+    printf '\002'
+    exit "$probe_status"
+  ) || return 1
+  output=${output%$'\002'}
+  [[ ${#output} -le 65536 ]] || return 1
+  printf '%s' "$output"
+}
+
+doctor_row() {
+  local field separator=''
+  for field in "$@"; do
+    field=${field//[^[:print:]]/?}
+    printf '%s%s' "$separator" "$field"
+    separator=$'\t'
   done
+  printf '\n'
+}
+
+doctor_policy() {
+  local name=$1 version=$2 baseline='' component version_baseline a b c x y z
+  while IFS='|' read -r component version_baseline; do
+    [[ "$component" != "$name" ]] || baseline=$version_baseline
+  done <<'POLICY'
+tailscale|1.104.2
+jq|1.8.2
+POLICY
+  local version_pattern='^(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})(-t[0-9a-f]{6,40}(-g[0-9a-f]{6,40})?)?$'
+  if [[ ! "$version" =~ $version_pattern ]]; then
+    printf '%s' 'unknown|missing, unparseable, development, or vendor build; patch evidence required'
+    return
+  fi
+  version=${version%%-*}
+  IFS=. read -r a b c <<< "$version"
+  IFS=. read -r x y z <<< "$baseline"
+  if [[ "$name" == tailscale ]] && (( 10#$b % 2 != 0 )); then
+    printf '%s' 'unsupported|unstable Tailscale branch is outside reviewed policy'
+  elif [[ "$version" == "$baseline" ]]; then
+    printf 'supported|matches reviewed %s version baseline; build provenance and platform compatibility unverified' "$baseline"
+  elif (( 10#$a < 10#$x || (10#$a == 10#$x && 10#$b < 10#$y) || (10#$a == 10#$x && 10#$b == 10#$y && 10#$c < 10#$z) )); then
+    if [[ "$name" == tailscale && "$a" == 1 ]]; then
+      printf '%s' 'advisory-affected|below 1.104.2 policy floor; conditional TS-2026-013 if compromised certificates remain trusted; exposure unverified'
+      if (( 10#$b < 102 || (10#$b == 102 && 10#$c < 3) )); then
+        printf '%s' '; TS-2026-011 if advertising affected 4via6 routes'
+      fi
+      if (( 10#$b < 102 || (10#$b == 102 && 10#$c < 1) )); then
+        printf '%s' '; TS-2026-010 if SSH acceptEnv forwards secrets'
+      fi
+      if (( 10#$b < 98 || (10#$b == 98 && 10#$c < 9) )); then
+        printf '%s' '; TS-2026-009/006 if affected SSH server enforces nonroot restrictions; TS-2026-005 if affected Serve operator proxies privileged sockets'
+      fi
+    else
+      printf 'unsupported|below reviewed %s version baseline; no vulnerability conclusion' "$baseline"
+    fi
+  else
+    printf '%s' 'unknown|newer than dated reviewed baseline; human policy refresh required'
+  fi
+}
+
+if [[ "$mode" == doctor && -z "$selector" ]]; then
+  printf 'tailmux %s\nPolicy evidence date 2026-10-22. Version policy is separate from platform compatibility.\n' "$TAILMUX_VERSION"
+  printf 'Read-only local inventory. No remote tmux, trust-store, or vendor-patch verification.\n'
+  printf 'name\trole/owner\tactive path\tCLI version\tdaemon version\tpolicy classification\tevidence date\treason\n'
+  policy=supported
+  if (( BASH_VERSINFO[0] < 3 || (BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] < 2) )); then policy=unsupported; fi
+  doctor_row Bash 'runtime interpreter / OS owner' "$BASH" "$BASH_VERSION" - "$policy" 2026-10-22 'Bash 3.2 language baseline accepted; OS security maintenance unknown'
+  jq_path=$(command -v jq || :)
+  ts_path=$(command -v tailscale || :)
+  ssh_path=$(command -v ssh || :)
+  head_path=$(command -v head || :)
+  jq_version=unknown
+  if [[ -n "$jq_path" && -n "$head_path" ]]; then
+    raw=$(doctor_probe jq --version) || raw=''
+    [[ "$raw" =~ ^jq-([0-9]+\.[0-9]+\.[0-9]+)$ ]] && jq_version=${BASH_REMATCH[1]}
+  fi
+  IFS='|' read -r policy reason <<< "$(doctor_policy jq "$jq_version")"
+  if [[ -z "$jq_path" ]]; then policy=unsupported; reason='required jq executable missing'; fi
+  doctor_row jq 'JSON parser / package owner' "${jq_path:-unavailable}" "$jq_version" - "$policy" 2026-10-22 "$reason"
+  cli=unknown daemon=unknown build=unknown
+  if [[ -n "$ts_path" && -n "$jq_path" && -n "$head_path" ]]; then
+    daemon_read=true
+    if ! raw=$(doctor_probe tailscale version --daemon --json); then
+      daemon_read=false
+      raw=$(doctor_probe tailscale version --json) || raw=''
+    fi
+    parsed=$(printf '%s' "$raw" | jq -ers '
+      def version: type == "string" and length <= 128 and test("\\A[0-9][A-Za-z0-9.+_-]*\\z");
+      if length != 1 then error("documents") else .[0] end |
+      if type != "object" or (.long | version | not) or
+        (.short | version | not) or (.majorMinorPatch | version | not) or
+        ((.long | split("-")[0]) != .majorMinorPatch) or
+        ((.short | split("-")[0]) != .majorMinorPatch) or
+        (has("daemonLong") and (.daemonLong | version | not)) or
+        any([.isDev, .gitDirty, .unstableBranch][]; . != null and type != "boolean")
+      then error("schema") else . end |
+      [.long, (.daemonLong // "unknown"),
+       (if .isDev == true or .gitDirty == true or .unstableBranch == true then "unreviewed" else "release" end)] | join("|")
+    ' 2>/dev/null) || parsed='unknown|unknown|unknown'
+    IFS='|' read -r cli daemon build <<< "$parsed"
+    [[ "$daemon_read" == true ]] || daemon=unknown
+  fi
+  mismatch='CLI/daemon comparison unknown'
+  if [[ "$cli" != unknown && "$daemon" != unknown ]]; then
+    mismatch='CLI/daemon versions match'
+    [[ "$cli" == "$daemon" ]] || mismatch='CLI/daemon mismatch; package owner must verify active daemon; no restart performed'
+  fi
+  for component in CLI daemon; do
+    version=$cli active_path=${ts_path:-unavailable}
+    if [[ "$component" == daemon ]]; then version=$daemon; active_path='unknown (reported through local CLI)'; fi
+    IFS='|' read -r policy reason <<< "$(doctor_policy tailscale "$version")"
+    if [[ "$component" == CLI && "$build" == unreviewed ]]; then policy=unknown; reason='development, dirty, or unstable CLI build; vendor patch evidence required'; fi
+    if [[ -z "$ts_path" ]]; then policy=unsupported; reason='required Tailscale executable missing'; fi
+    doctor_row "Tailscale $component" 'transport / Tailscale package owner' "$active_path" "$cli" "$daemon" "$policy" 2026-10-22 "$reason; $mismatch"
+  done
+  ssh_version=unknown
+  if [[ -n "$ssh_path" && -n "$head_path" ]]; then
+    raw=$(doctor_probe ssh -V) || raw=''
+    [[ "$raw" =~ ^(OpenSSH[_][0-9]+\.[0-9]+p?[0-9]*)[[:space:],] ]] && ssh_version=${BASH_REMATCH[1]}
+  fi
+  policy=unknown reason='vendor patch and OS build evidence required; banner alone cannot establish CVE applicability'
+  if [[ -z "$ssh_path" ]]; then policy=unsupported; reason='required OpenSSH executable missing'; fi
+  doctor_row OpenSSH 'SSH client / OS or package owner' "${ssh_path:-unavailable}" "$ssh_version" - "$policy" 2026-10-22 "$reason"
+  doctor_row tmux 'remote session / destination operator' 'unknown (remote-owned)' unknown - unknown 2026-10-22 'local tmux is irrelevant; no remote command executed'
+  doctor_row 'TLS trust' 'OS certificates and bundled Go / OS and Tailscale owners' 'unknown (not inspected)' unknown unknown unknown 2026-10-22 'system Go upgrades do not patch bundled Tailscale Go; trust-store exposure unverified'
   exit 0
 fi
 for dependency in jq tailscale ssh mktemp head wc tr rm rmdir; do
