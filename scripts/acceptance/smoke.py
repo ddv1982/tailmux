@@ -98,11 +98,14 @@ def drive(argv, output, timeout, env):
         outcome = 'timeout'
     except KeyboardInterrupt:
         outcome = 'cancelled'
-    except OSError:
+    except (OSError, termios.error):
         outcome = 'io-error'
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
-        termios.tcsetattr(0, termios.TCSANOW, saved)
+        try:
+            termios.tcsetattr(0, termios.TCSANOW, saved)
+        except (OSError, termios.error):
+            outcome = 'io-error'
         for signum, handler in previous.items():
             signal.signal(signum, handler)
         os.close(master)
@@ -192,7 +195,7 @@ def main():
         print('\r\nPrivate smoke receipt saved. NOT VERIFIED. Review and redact before sharing.')
         return {'timeout': 124, 'cancelled': 130, 'output-limit': 125, 'io-error': 74}.get(
             result['outcome'], result['exit_code'] if result['exit_code'] >= 0 else 128 - result['exit_code'])
-    except (ValueError, OSError, subprocess.SubprocessError):
+    except (ValueError, OSError, termios.error, subprocess.SubprocessError):
         print('smoke refused: check expected commit, clean checkout, target, user, platform, terminal, and private output', file=sys.stderr)
         return 2
 

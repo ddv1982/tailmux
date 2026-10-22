@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+import errno
 import fcntl
 import hashlib
 import importlib.util
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -365,6 +367,66 @@ class Acceptance(unittest.TestCase):
                         {'ACCEPTANCE_REQUEST_SHA256': 'f' * 64}, {'FAKE_GH_FAIL': '1'}):
             run_gate(changes)
             self.assertTrue(trace.exists())
+
+    def test_terminal_restore_failure_still_reaps_child_and_closes_pty(self):
+        spec = importlib.util.spec_from_file_location('cleanup_smoke', SMOKE)
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        signals = (signal.SIGWINCH, signal.SIGTERM, signal.SIGHUP, signal.SIGALRM)
+        for failure in (None, termios.error, OSError):
+            with self.subTest(failure=failure):
+                output = self.root / ('restore-' + (failure.__name__ if failure else 'control'))
+                output.mkdir()
+                master, slave = pty.openpty()
+                saved_input = os.dup(0)
+                os.dup2(slave, 0)
+                handlers = {signum: signal.getsignal(signum) for signum in signals}
+                original_fork = pty.fork
+                original_setattr = termios.tcsetattr
+                owned = {}
+
+                def capture_fork():
+                    pid, descriptor = original_fork()
+                    if pid:
+                        owned.update(pid=pid, descriptor=descriptor)
+                    return pid, descriptor
+
+                def restore(fd, when, attributes):
+                    if failure is not None and when == termios.TCSANOW:
+                        raise failure(errno.EIO, 'fixture terminal restoration failure')
+                    return original_setattr(fd, when, attributes)
+
+                try:
+                    with patch.object(smoke.pty, 'fork', side_effect=capture_fork), \
+                            patch.object(smoke.termios, 'tcsetattr', side_effect=restore):
+                        result = smoke.drive(['/bin/sleep', '5'], output, 0.05,
+                                             {'PATH': '/usr/bin:/bin', 'TERM': 'xterm'})
+                    self.assertEqual(result['outcome'], 'io-error' if failure else 'timeout')
+                    with self.assertRaises(ChildProcessError):
+                        os.waitpid(owned['pid'], os.WNOHANG)
+                    with self.assertRaises(OSError):
+                        os.fstat(owned['descriptor'])
+                    self.assertEqual({signum: signal.getsignal(signum) for signum in signals}, handlers)
+                    self.assertEqual(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+                finally:
+                    signal.setitimer(signal.ITIMER_REAL, 0)
+                    for signum, handler in handlers.items():
+                        signal.signal(signum, handler)
+                    if owned:
+                        try:
+                            os.close(owned['descriptor'])
+                        except OSError:
+                            pass
+                        try:
+                            waited, _ = os.waitpid(owned['pid'], os.WNOHANG)
+                            if not waited:
+                                os.kill(owned['pid'], signal.SIGKILL)
+                                os.waitpid(owned['pid'], 0)
+                        except ChildProcessError:
+                            pass
+                    os.dup2(saved_input, 0)
+                    for descriptor in (saved_input, master, slave):
+                        os.close(descriptor)
 
     def test_native_pty_resize_and_cancel_controls(self):
         output = self.root / 'pty-resize'
