@@ -7,7 +7,7 @@ test_tailshare_missing_path_fails() {
   local status
 
   IFS=$'\t' read -r tmp fake_bin < <(create_fake_env)
-  run_setup_with_input install $'y\ny\nn\n' "$tmp/home" "$fake_bin" Linux >/dev/null
+  install_legacy_taildrive_fixture "$tmp/home"
 
   set +e
   out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" bash -c 'source "$HOME/.profile"; tailshare docs /path/does-not-exist' 2>&1)"
@@ -25,7 +25,7 @@ test_tailshare_success_prints_mount_hint() {
   local out
 
   IFS=$'\t' read -r tmp fake_bin < <(create_fake_env)
-  run_setup_with_input install $'y\ny\nn\n' "$tmp/home" "$fake_bin" Linux >/dev/null
+  install_legacy_taildrive_fixture "$tmp/home"
 
   out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" bash -c 'source "$HOME/.profile"; tailshare docs "$HOME"')"
   [[ "$out" == *"Shared 'docs'"* ]] || fail "expected successful share message"
@@ -57,7 +57,7 @@ exit 0
 BIN
   chmod +x "$fake_bin/tailscale"
 
-  run_setup_with_input install $'y\ny\nn\n' "$tmp/home" "$fake_bin" Linux USER=tailuser >/dev/null
+  install_legacy_taildrive_fixture "$tmp/home"
 
   set +e
   out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" bash -c 'source "$HOME/.profile"; tailmount linux-laptop docs' 2>&1)"
@@ -103,7 +103,7 @@ fi
 BIN
   chmod +x "$fake_bin/uname" "$fake_bin/mount.davfs" "$fake_bin/mount" "$fake_bin/sudo"
 
-  run_setup_with_input install $'y\ny\nn\n' "$tmp/home" "$fake_bin" Linux >/dev/null
+  install_legacy_taildrive_fixture "$tmp/home"
 
   out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" bash -c 'source "$HOME/.profile"; tailmount linux-laptop docs "'"$mount_point"'"' 2>&1)"
   [[ "$out" == *"retrying with sudo"* ]] || fail "expected sudo retry message"
@@ -138,7 +138,7 @@ exit 1
 BIN
   chmod +x "$fake_bin/uname" "$fake_bin/umount" "$fake_bin/fusermount"
 
-  run_setup_with_input install $'y\ny\nn\n' "$tmp/home" "$fake_bin" Linux >/dev/null
+  install_legacy_taildrive_fixture "$tmp/home"
 
   out="$(HOME="$tmp/home" SHELL=/bin/bash PATH="$fake_bin:$PATH" bash -c 'source "$HOME/.profile"; tailumount linux-laptop docs "'"$mount_point"'"' 2>&1)"
   [[ "$out" == *"Unmounted"* ]] || fail "expected unmount success output"

@@ -1,10 +1,26 @@
 # File Sharing (Taildrive)
 
-Share directories between Tailscale devices using [Taildrive](https://tailscale.com/docs/features/taildrive), Tailscale's built-in WebDAV file sharing. Useful for accessing project files on a remote machine with local editors and tools.
+Core setup no longer installs, refreshes, or removes Taildrive helpers. It never installs mount dependencies or changes your Tailscale application.
+Existing `tailshare`, `tailmount`, and related functions are legacy code pending retirement during the executable migration.
+Their templates remain in `scripts/lib/taildrive_templates.sh` for review and regression tests, outside core setup.
 
-Both Linux and macOS can manage shares via CLI (`tailshare`, `tailshare-ls`) and mount shares (`tailmount`).
+## Remove a legacy installation
 
-**Note for macOS:** This installer uses the open-source Homebrew `tailscale` formula (CLI-only, no menu bar icon) to enable full `tailscale drive` CLI support. If a standalone/App Store install is detected, setup stops and asks you to remove it first to avoid conflicts. If you prefer the GUI app, see [Tailscale macOS variants](https://tailscale.com/kb/1065/macos-variants), but note that GUI apps cannot use `tailscale drive` from the command line.
+Back up your shell RC file and inspect the complete legacy Taildrive block against the reviewed template.
+Remove only the recognized Taildrive span through your dotfile owner's workflow. Markers alone do not prove ownership.
+Do not remove unrelated shell settings or a modified block without reviewing the changes.
+Open a fresh shell to discard loaded helpers.
+
+`bash setup.sh uninstall` removes recognized core Tailmux blocks only. It leaves Taildrive blocks, active mounts, shares, package installations, and Tailscale identity intact.
+Ask the device operator to handle any remaining mounts or shares through the existing Taildrive installation.
+Package removal and application migration remain separate operator decisions.
+
+## Use existing legacy helpers
+
+The command reference below describes an existing legacy installation. It is not a core setup option.
+Legacy mount helpers can retry through `sudo`. Do not invoke them unless you intend that separate operation.
+For macOS CLI availability, consult the documentation for your existing [Tailscale variant](https://tailscale.com/docs/concepts/macos-variants).
+Core setup neither selects a variant nor changes it.
 
 ## Configure read-only access
 
@@ -115,28 +131,5 @@ Taildrive share names should be simple and portable:
 Explicit `mount_point` values must be absolute paths. Quote paths that contain spaces.
 `tailmount` and `tailumount` reject empty, relative, and option-shaped values before running utilities.
 
-**Linux prerequisite:** Linux mounting uses `davfs2` (`mount -t davfs`). The installer can prompt to install it automatically when you enable Taildrive functions.
-
-## macOS: Open-Source Tailscale (CLI-only)
-
-On macOS, this installer uses the Homebrew `tailscale` formula — the open-source CLI-only version. This enables full `tailscale drive` CLI support but has some trade-offs:
-
-| Feature | Open-Source (Homebrew) | GUI App (Standalone/App Store) |
-|---------|------------------------|--------------------------------|
-| Menu bar icon | No | Yes |
-| `tailscale drive` CLI | **Yes** | No |
-| Auto-configured MagicDNS | Manual | Auto |
-| Manage via | Terminal commands | GUI + limited CLI |
-
-**Common commands:**
-```bash
-tailscale status          # Check connection status
-tailscale up              # Connect to tailnet
-tailscale down            # Disconnect
-tailscale drive list      # List shares
-```
-
-After installation, authenticate and enable Tailscale SSH:
-```bash
-sudo tailscale up --ssh
-```
+Linux mounting requires an operator-managed `davfs2` installation. Core setup never installs it.
+Keep dependency, daemon, sharing, and authentication management with their existing owners.

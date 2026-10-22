@@ -186,6 +186,8 @@ BIN
 
 run_core_resolver_security_suite() {
   test_tailmux_rejects_option_target
+  test_tailmux_help_flag
+  test_tailmux_version_flag
   test_tailmux_resolver_ip_passthrough
   test_tailmux_alias_precedence_over_tailnet_json
   test_tailmux_status_json_matches_short_and_fqdn

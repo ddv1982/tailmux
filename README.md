@@ -1,153 +1,120 @@
 # tailmux
 
-Access tmux sessions on your Tailscale devices from anywhere.
+Connect to an SSH destination and resume or create a tmux session.
 
 ```bash
-tailmux macbook-pro       # connect by device name
-tailmux 100.101.102.103   # connect by Tailscale IP
+tailmux macbook-pro
+tailmux 100.101.102.103
 ```
-
-## Contents
-
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Setup Commands](#setup-commands)
-- [Usage](#usage)
-- [File Sharing (Taildrive)](#file-sharing-taildrive)
-- [Supported Platforms](#supported-platforms)
-- [Uninstall](#uninstall)
-- [Notes](#notes)
-- [Development](#development)
-- [License](#license)
 
 ## Prerequisites
 
-- bash and curl
-- A [Tailscale](https://tailscale.com) account
-- An SSH service reachable at the destination, with access permitted for your account
-- tmux available in the remote account's noninteractive shell PATH
+Use Bash on macOS or Linux to run setup. The legacy function runs in Bash or Zsh.
+Install and maintain Tailscale through its existing package or application owner.
+The client needs OpenSSH. The destination account needs tmux in its noninteractive shell PATH and an SSH service that permits access.
+Setup checks Tailscale availability without contacting its daemon. It can install the function before Tailscale is available.
 
-## Quick Start
+Client setup does not install, update, or remove packages. It does not change services, operator privileges, authentication, Tailscale SSH settings, applications, policy, or Tailscale state.
+Destination server configuration belongs to its operator. Client installation does not require enabling an inbound SSH server on your own device.
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.sh)
-```
+## Install from a reviewed checkout
 
-This will:
-- Install Tailscale and tmux (Homebrew on macOS, system package manager on Linux)
-- Add the `tailmux` shell function
-- Configure Tailscale operator access (Linux) and enable Tailscale SSH
-- Optionally install [Taildrive](#file-sharing-taildrive) shell functions
-
-## Setup Commands
+Inspect the local checkout, then run:
 
 ```bash
-bash setup.sh install    # install/configure everything
-bash setup.sh uninstall  # remove shell functions and optionally Tailscale state
-bash setup.sh update     # check for and apply package updates
-bash setup.sh --help     # show all options
+bash setup.sh install
 ```
 
-All managed packages (`tailscale`, `tmux`, `davfs2`) track the latest stable version. Set `TAILMUX_TAILSCALE_TRACK=unstable` to follow the unstable channel.
+Setup uses only that checkout's modules. Remote process-substitution installation is disabled until a reviewed release distribution path exists.
+Open a fresh shell after setup.
+
+This unit still installs the reviewed legacy core function into your shell RC file. The standalone executable and resolver migration are separate work.
+For Zsh, setup uses `${ZDOTDIR:-$HOME}/.zshrc`. For Bash, it chooses the first existing `.bashrc` or `.bash_profile`, then falls back to `.profile`.
+
+Install and uninstall preflight those four standard RC paths. They refuse unmanaged `tailmux` functions or aliases, unknown or modified core blocks, malformed markers, symlinks, and symlinked ancestors.
+They recognize only the examined 0.1.0 core template and its PR-01 security patch.
+RC files must be current-user owned, have one hard link, and forbid group or other writes. The direct parent must be current-user owned and forbid group or other writes too.
+Ancestors must belong to the current user or root. Writable ancestors require the sticky bit.
+RC-file ACLs require manual handling. Directory ACLs are refused except the exact macOS default entry `0: group:everyone deny delete`.
+That deny-only entry can appear on the direct parent or a higher ancestor and remains unchanged. Unknown entries and mutating grants are refused.
+
+Setup preserves bytes outside recognized core spans, owner, group, and mode. On macOS it preserves and verifies file flags and xattrs with the system copy and xattr tools. On Linux it requires GNU `cp` with explicit xattr preservation.
+A changed RC gets a protected `.tailmux-backup.*` directory beside it before same-directory replacement.
+Keep those backups until you have checked the result. A retry leaves an already-current block unchanged.
+
+## Setup commands
+
+```bash
+bash setup.sh install
+bash setup.sh uninstall
+bash setup.sh update
+bash setup.sh --help
+bash setup.sh --version
+```
+
+Help and version work offline without loading any modules.
+`update` returns a deprecation error without loading modules or running package commands. Use each dependency's existing package owner.
+No command prompts for machine administration.
 
 ## Usage
 
 ```bash
-tailmux <host>            # connect and attach/create tmux session
-tailmux doctor <host>     # run resolver diagnostics
-tailmux --help            # show usage
-tailmux --version         # show version
+tailmux <host>
+tailmux doctor <host>
+tailmux --help
+tailmux --version
 ```
 
-**Tip:** Use `tailscale status` to list all devices with their hostnames and IPs.
+The legacy resolver tries direct IPs, the alias file, Tailscale status JSON, Tailscale DNS, optional LAN lookup, and system DNS. It passes unresolved names to SSH.
+It does not enforce tailnet membership. Check the reported destination before connecting.
+`TAILMUX_LAN_FALLBACK=1` enables the optional `<host>.local` lookup.
 
-**Examples:**
+Aliases are data in `~/.config/tailmux/hosts`, or the path in `TAILMUX_HOSTS_FILE`:
+
+```text
+home 100.64.0.10
+mini mini.example-tailnet.ts.net
+```
+
+Tailmux invokes local OpenSSH. Tailscale SSH applies when the destination runs that server and tailnet policy permits access.
+Other destinations need their own SSH service and access controls. Keep SSH host-key checking enabled.
+The remote account owns executable discovery. Tailmux does not copy the local PATH or add package-manager directories on the destination.
+
+## Uninstall core functions
+
+Run from the same reviewed local checkout:
 
 ```bash
-tailmux macbook-pro       # connect by device name
-tailmux 100.101.102.103   # connect by Tailscale IP
-tailmux doctor home       # diagnose resolution for "home"
+bash setup.sh uninstall
 ```
 
-### Host Resolution Order
+Uninstall removes only recognized core blocks from the standard RC paths. It leaves packages, Tailscale identity, networking settings, mounts, shares, and legacy Taildrive blocks intact.
+Open a fresh shell to discard loaded functions.
+Arbitrary sourced dotfiles and other custom RC locations require manual inspection.
+Inspection detects literal declarations. It cannot discover aliases or functions created dynamically or through other sourced files.
+See [troubleshooting](docs/troubleshooting.md) for refusal and recovery guidance.
 
-`tailmux` resolves hosts in this order to handle cases where short-name DNS is unreliable:
+## Legacy Taildrive
 
-1. Direct IP input
-2. User alias file (`~/.config/tailmux/hosts`)
-3. `tailscale status --json` (device hostname / short name / FQDN)
-4. `tailscale dns query` against your tailnet suffix
-5. Optional LAN fallback (`<host>.local`) when `TAILMUX_LAN_FALLBACK=1`
-6. System DNS lookup
-
-### Alias File
-
-- Path: `~/.config/tailmux/hosts` (override with `TAILMUX_HOSTS_FILE`)
-- Format: `<alias> <target>`
-- Example:
-  ```text
-  home 100.64.0.10
-  mini mini.example-tailnet.ts.net
-  ```
-
-## File Sharing (Taildrive)
-
-Share directories between devices using [Taildrive](https://tailscale.com/docs/features/taildrive):
-
-```bash
-tailshare myproject ~/projects/myapp     # share a directory
-tailmount linux-laptop myproject         # mount on another machine
-```
-
-For ACL setup, commands reference, and macOS CLI details, see [docs/taildrive.md](docs/taildrive.md).
-
-For troubleshooting connection issues, Tailscale on macOS, and Linux mounts, see [docs/troubleshooting.md](docs/troubleshooting.md).
-
-## Supported Platforms
-
-| OS | Package Manager | Remote Access Mode |
-|----|-----------------|--------------------|
-| macOS | Homebrew | OpenSSH client |
-| Debian/Ubuntu | apt | OpenSSH client |
-| Fedora | dnf | OpenSSH client |
-| RHEL/CentOS | yum | OpenSSH client |
-| Arch Linux | pacman | OpenSSH client |
-| Windows | - | Use WSL |
-
-## Uninstall
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/ddv1982/tailmux/main/setup.sh) uninstall
-```
-
-## Notes
-
-- `tailmux` invokes the local OpenSSH `ssh` client. [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) applies when the destination runs that server and tailnet policy permits access. Other destinations require their own SSH service and access controls.
-- The legacy resolver accepts direct IPs and aliases, falls back to system DNS, and passes unresolved names to SSH. It does not enforce tailnet membership. Check the reported destination before connecting.
-- SSH host-key verification follows your OpenSSH configuration. Keep host-key checking enabled.
-- The remote account owns executable discovery. Configure its noninteractive shell PATH so `command -v tmux` succeeds. Tailmux does not copy the local PATH or add package-manager directories on the destination.
-- You can set simpler machine names in the [Tailscale admin console](https://login.tailscale.com/admin/machines) by clicking on a device and editing its name
+Core setup no longer installs or manages Taildrive helpers or mount dependencies.
+Existing helpers remain legacy code pending retirement during the executable migration.
+See [Taildrive legacy support and removal](docs/taildrive.md) before using or removing an existing installation.
 
 ## Development
 
-`setup.sh` loads modules from `scripts/lib/`: `constants.sh`, `dependency_policy.sh`, `ui.sh`, `platform.sh`, `taildrive_templates.sh`, `rc_blocks.sh`, `managed_blocks.sh`, `package_manager.sh`, `tailscale_macos.sh`, `packages.sh`, `update.sh`, `install.sh`, `uninstall.sh`, `cli.sh`.
-
-Run tests:
-
-```bash
-bash scripts/tests/run.sh lint    # syntax + shellcheck
-bash scripts/tests/run.sh quick   # required core regression suites
-bash scripts/tests/run.sh full    # core + extended regression suites
-bash scripts/tests/smoke.sh       # compatibility wrapper (runs full)
-```
-
-CI uses required checks (`lint`, `core-linux`, `core-macos`) and advisory extended checks (`extended-linux`, `extended-macos`).
-
-For local module development:
+`setup.sh` loads local core lifecycle modules from `scripts/lib` after early CLI dispatch.
+Runtime templates remain separate from package and server administration.
+Tests use disposable homes and fake network, SSH, mount, package, and privilege commands.
 
 ```bash
-TAILMUX_USE_LOCAL_MODULES=1 bash setup.sh install
+bash scripts/tests/run.sh lint
+bash scripts/tests/run.sh quick
+bash scripts/tests/run.sh full
+bash scripts/tests/smoke.sh
 ```
+
+The full suite retains resolver, legacy Taildrive runtime, and PR-01 security regressions alongside the new installer lifecycle tests.
+CI workflow hardening remains separate work.
 
 ## License
 

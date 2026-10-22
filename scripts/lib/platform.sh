@@ -1,27 +1,26 @@
 # shellcheck shell=bash
-command_exists() { command -v "$1" &>/dev/null; }
-
-get_os_name() {
-  if [[ -n "${TAILMUX_OS_OVERRIDE:-}" ]]; then
-    echo "$TAILMUX_OS_OVERRIDE"
-    return 0
-  fi
-  uname -s
+validate_rc_environment() {
+  local path
+  for path in "${HOME:-}" "${ZDOTDIR:-${HOME:-}}"; do
+    if [[ "$path" != /* || "$path" == *$'\n'* ]]; then
+      printf '%s\n' 'Error: HOME and ZDOTDIR must be absolute paths without newlines.' >&2
+      return 1
+    fi
+  done
 }
 
-# Detect shell config
 detect_shell_rc() {
-  if [[ -n "${ZSH_VERSION:-}" ]] || [[ "${SHELL:-}" == *zsh* ]]; then
-    echo "$HOME/.zshrc"
-    return 0
+  if [[ "${SHELL:-}" == *zsh* ]]; then
+    printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc"
+  elif [[ -e "$HOME/.bashrc" || -L "$HOME/.bashrc" ]]; then
+    printf '%s\n' "$HOME/.bashrc"
+  elif [[ -e "$HOME/.bash_profile" || -L "$HOME/.bash_profile" ]]; then
+    printf '%s\n' "$HOME/.bash_profile"
+  else
+    printf '%s\n' "$HOME/.profile"
   fi
-  if [[ -f "$HOME/.bashrc" ]]; then
-    echo "$HOME/.bashrc"
-    return 0
-  fi
-  if [[ -f "$HOME/.bash_profile" ]]; then
-    echo "$HOME/.bash_profile"
-    return 0
-  fi
-  echo "$HOME/.profile"
+}
+
+rc_paths() {
+  printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "${ZDOTDIR:-$HOME}/.zshrc"
 }

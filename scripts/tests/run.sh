@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export REPO_ROOT
 export SETUP_SCRIPT="$REPO_ROOT/setup.sh"
-export TAILMUX_SKIP_MACOS_FILE_SHARING_PREF=1
 
 # shellcheck source=scripts/tests/lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
@@ -16,30 +15,24 @@ source "$SCRIPT_DIR/lib/legacy_cases.sh"
 
 AVAILABLE_SUITES=(
   syntax_lint
-  core_install
+  installer_lifecycle
   core_resolver_security
   security_boundaries
-  extended_macos_states
-  extended_update_branches
   extended_taildrive_runtime
-  extended_uninstall_edges
 )
 
 QUICK_SUITES=(
-  core_install
+  installer_lifecycle
   core_resolver_security
   security_boundaries
 )
 
 FULL_SUITES=(
   syntax_lint
-  core_install
+  installer_lifecycle
   core_resolver_security
   security_boundaries
-  extended_macos_states
-  extended_update_branches
   extended_taildrive_runtime
-  extended_uninstall_edges
 )
 
 print_usage() {
@@ -65,10 +58,10 @@ load_suite() {
         source "$SCRIPT_DIR/suites/syntax_lint.sh"
       fi
       ;;
-    core_install)
-      if ! declare -f run_core_install_suite >/dev/null 2>&1; then
-        # shellcheck source=scripts/tests/suites/core_install.sh
-        source "$SCRIPT_DIR/suites/core_install.sh"
+    installer_lifecycle)
+      if ! declare -f run_installer_lifecycle_suite >/dev/null 2>&1; then
+        # shellcheck source=scripts/tests/suites/installer_lifecycle.sh
+        source "$SCRIPT_DIR/suites/installer_lifecycle.sh"
       fi
       ;;
     core_resolver_security)
@@ -83,28 +76,10 @@ load_suite() {
         source "$SCRIPT_DIR/suites/security_boundaries.sh"
       fi
       ;;
-    extended_macos_states)
-      if ! declare -f run_extended_macos_states_suite >/dev/null 2>&1; then
-        # shellcheck source=scripts/tests/suites/extended_macos_states.sh
-        source "$SCRIPT_DIR/suites/extended_macos_states.sh"
-      fi
-      ;;
-    extended_update_branches)
-      if ! declare -f run_extended_update_branches_suite >/dev/null 2>&1; then
-        # shellcheck source=scripts/tests/suites/extended_update_branches.sh
-        source "$SCRIPT_DIR/suites/extended_update_branches.sh"
-      fi
-      ;;
     extended_taildrive_runtime)
       if ! declare -f run_extended_taildrive_runtime_suite >/dev/null 2>&1; then
         # shellcheck source=scripts/tests/suites/extended_taildrive_runtime.sh
         source "$SCRIPT_DIR/suites/extended_taildrive_runtime.sh"
-      fi
-      ;;
-    extended_uninstall_edges)
-      if ! declare -f run_extended_uninstall_edges_suite >/dev/null 2>&1; then
-        # shellcheck source=scripts/tests/suites/extended_uninstall_edges.sh
-        source "$SCRIPT_DIR/suites/extended_uninstall_edges.sh"
       fi
       ;;
     *)
