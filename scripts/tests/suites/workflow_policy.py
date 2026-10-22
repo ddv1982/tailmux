@@ -3,6 +3,8 @@
 import copy
 from pathlib import Path
 import sys
+import os
+import tempfile
 import subprocess
 import unittest
 
@@ -15,6 +17,7 @@ class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.ci = policy.load((ROOT / '.github/workflows/ci.yml').read_text())
         self.release = policy.load((ROOT / '.github/workflows/release.yml').read_text())
+        self.acceptance = policy.load((ROOT / '.github/workflows/acceptance.yml').read_text())
 
     def test_actual_workflows_pass_and_on_is_literal(self):
         self.assertIn('on', self.ci)
@@ -22,14 +25,44 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(policy.load('on: true\nvalue: false\n'), {'on': True, 'value': False})
         policy.validate_ci(self.ci)
         policy.validate_release(self.release)
+        policy.validate_acceptance(self.acceptance)
 
-    def test_acceptance_refusal_exits_before_build(self):
-        refusal = self.release['jobs']['publish']['steps'][2]['run']
-        result = subprocess.run(['bash', '-e', '-c', refusal + '\nprintf should-not-build'],
-                                capture_output=True, text=True, timeout=5)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, '')
-        self.assertEqual(result.stderr, 'Release acceptance is not enabled. PR-05 must install the reviewed evidence gate.\n')
+    def test_missing_acceptance_stops_before_build(self):
+        command = self.release['jobs']['publish']['steps'][2]['run']
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory)
+            marker = fake / 'forbidden'
+            for name in ('gh', 'git'):
+                tool = fake / name
+                tool.write_text('#!/bin/sh\n: > "$FORBIDDEN"\nexit 99\n')
+                tool.chmod(0o700)
+            env = {'PATH': str(fake) + os.pathsep + os.path.dirname(sys.executable) + ':/usr/bin:/bin',
+                   'EXPECTED_SOURCE_SHA': 'a' * 40, 'FORBIDDEN': str(marker)}
+            result = subprocess.run(['/bin/bash', '-e', '-c', command + '\nprintf should-not-build'],
+                                    cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(result.stdout, '')
+            self.assertIn('Acceptance release gate rejected. NOT VERIFIED.', result.stderr)
+            self.assertFalse(marker.exists())
+
+    def test_acceptance_privilege_and_gate_mutations_rejected(self):
+        changes = [
+            lambda d: d.update(on={'pull_request_target': {}}),
+            lambda d: d['jobs']['preflight'].update(environment='acceptance'),
+            lambda d: d['jobs']['preflight'].update(permissions={'contents': 'write'}),
+            lambda d: d['jobs']['validate'].pop('needs'),
+            lambda d: d['jobs']['validate'].update({'if': '${{ always() }}'}),
+            lambda d: d['jobs']['validate'].update({'continue-on-error': True}),
+            lambda d: d['jobs']['validate']['strategy']['matrix'].update(os=['self-hosted']),
+            lambda d: d['jobs']['validate']['steps'][0]['with'].update(ref='attacker'),
+            lambda d: d['jobs']['preflight']['steps'][-1].update(run='true'),
+            lambda d: d['jobs']['validate']['steps'][2].update(run='true'),
+            lambda d: d['jobs']['validate']['steps'][2]['env'].update(ACCEPTANCE_ARCHIVE_SHA256='forged'),
+            lambda d: d['jobs']['validate']['steps'][3]['with'].update(path='private-evidence/**'),
+        ]
+        for index, change in enumerate(changes):
+            with self.subTest(case=index):
+                self.reject(self.acceptance, change, policy.validate_acceptance)
 
     def test_ambiguous_yaml_rejected(self):
         for text in ('on: push\non: pull_request\n', 'x: {a: 1, a: 2}',

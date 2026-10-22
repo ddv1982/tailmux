@@ -125,20 +125,28 @@ Tailmux trusts current coordination identity and does not atomically pin a stabl
 See the [architecture reference](docs/architecture.md) and [troubleshooting guide](docs/troubleshooting.md).
 
 This development client has local fixture and lifecycle tests.
-Authenticated SSH, key mismatch, policy denial, interactive terminals, and Linux platform behavior still need the parent plan's isolated live evidence.
+Authenticated SSH, key mismatch, policy denial, interactive terminals, and Linux platform behavior still need the [isolated acceptance procedure](docs/acceptance.md).
+See the [compatibility matrix](docs/compatibility.md) and [laptop smoke-test guide](docs/acceptance.md#inspect-the-reviewed-checkout-first).
 Local test success is not a release-ready verdict.
 Taildrive helpers have been removed. See [legacy Taildrive migration](docs/taildrive.md).
 
 ## Development
 
+Install jq and ShellCheck through their package owners. Prepare a development-only virtual environment:
+
 ```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-dev.txt
+. .venv/bin/activate
 bash scripts/tests/run.sh lint
 bash scripts/tests/run.sh quick
 bash scripts/tests/run.sh full
 bash scripts/tests/smoke.sh
 ```
 
-Tests require Python 3 standard library, jq, and ShellCheck.
+Tests require Python 3.11 through 3.14, the hashed development requirements, jq, and ShellCheck.
+The full command runs every offline suite, including workflow and acceptance policy checks.
+Actionlint is a separate workflow syntax check. No live host test runs through the offline suite.
 Runtime requires no Python.
 Fixtures contain sanitized synthetic public records and faithful legacy RC bytes.
 Tests invoke the actual executable and setup CLI in disposable homes with fake transport and administration commands.

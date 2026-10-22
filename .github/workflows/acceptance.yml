@@ -1,0 +1,95 @@
+name: Acceptance evidence structure
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Reviewed full source SHA, identical to the dispatch workflow SHA
+        required: true
+        type: string
+      expected_merge_base:
+        description: Independently reviewed full merge-base SHA
+        required: true
+        type: string
+      evidence_artifact_id:
+        description: Independently produced redacted evidence ZIP artifact ID in this repository
+        required: true
+        type: string
+      archive_sha256:
+        description: Independently approved SHA-256 of the evidence ZIP download
+        required: true
+        type: string
+      request_sha256:
+        description: Independently approved SHA-256 of request.json inside the evidence ZIP
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bind the reviewed workflow and checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_BASE: ${{ inputs.expected_merge_base }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          source, base = os.environ['EXPECTED_SHA'], os.environ['EXPECTED_BASE']
+          assert re.fullmatch('[0-9a-f]{40}', source)
+          assert re.fullmatch('[0-9a-f]{40}', base)
+          assert source == os.environ['GITHUB_SHA'] == os.environ['GITHUB_WORKFLOW_SHA']
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == source
+          assert subprocess.check_output(['git', 'merge-base', 'HEAD', 'origin/main'], text=True).strip() == base
+          PY
+      - name: Require existing acceptance protections and reviewed history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 scripts/acceptance/preflight.py --expected-sha "$EXPECTED_SHA"
+
+  validate:
+    needs: preflight
+    environment: acceptance
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Test offline rejection and structural controls
+        run: python3 scripts/tests/suites/acceptance_cli.py
+      - name: Validate independently produced redacted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPTANCE_SOURCE_SHA: ${{ inputs.expected_sha }}
+          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.evidence_artifact_id }}
+          ACCEPTANCE_ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          ACCEPTANCE_REQUEST_SHA256: ${{ inputs.request_sha256 }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_BASE: ${{ inputs.expected_merge_base }}
+        run: python3 scripts/acceptance/release_gate.py --expected-sha "$EXPECTED_SHA" --expected-merge-base "$EXPECTED_BASE" > acceptance-structure.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: acceptance-structure-${{ matrix.os }}
+          path: acceptance-structure.json
+          if-no-files-found: error
+          retention-days: 7
