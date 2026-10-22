@@ -1,24 +1,7 @@
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-# Shared constants
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-NC='\033[0m'
-
-# Version: read from VERSION file if available, fall back to embedded default
-_tailmux_version_file="${BASH_SOURCE[0]%/*}/../../VERSION"
-if [[ -f "$_tailmux_version_file" ]]; then
-  read -r TAILMUX_VERSION < "$_tailmux_version_file"
-else
-  TAILMUX_VERSION="0.1.0"
-fi
-unset _tailmux_version_file
-
-read -r -d '' TAILMUX_FUNC <<'EOF' || true
+# >>> tailmux managed block (tailmux) >>>
 tailmux() {
   _tailmux_usage() {
-    echo "tailmux __TAILMUX_VERSION__ — attach to tmux sessions on Tailscale devices"
+    echo "tailmux 0.1.0 — attach to tmux sessions on Tailscale devices"
     echo ""
     echo "Usage: tailmux <host-or-ip>"
     echo "       tailmux doctor <host-or-ip>"
@@ -368,7 +351,7 @@ PY
     return 0
   fi
   if [[ "$1" == "--version" || "$1" == "-V" ]]; then
-    echo "tailmux __TAILMUX_VERSION__"
+    echo "tailmux 0.1.0"
     return 0
   fi
 
@@ -396,11 +379,6 @@ PY
   fi
 
   echo "tailmux: resolved $host -> $target ($mode)" >&2
-  ssh -t -- "$target" 'if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else echo "tmux not found on remote" >&2; exit 127; fi'
+  ssh -t -- "$target" "PATH=\"/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH\"; if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else echo \"tmux not found on remote\" >&2; exit 127; fi"
 }
-EOF
-TAILMUX_FUNC="${TAILMUX_FUNC//__TAILMUX_VERSION__/$TAILMUX_VERSION}"
-TAILMUX_BLOCK_BEGIN="# >>> tailmux managed block (tailmux) >>>"
-TAILMUX_BLOCK_END="# <<< tailmux managed block (tailmux) <<<"
-TAILDRIVE_BLOCK_BEGIN="# >>> tailmux managed block (taildrive) >>>"
-TAILDRIVE_BLOCK_END="# <<< tailmux managed block (taildrive) <<<"
+# <<< tailmux managed block (tailmux) <<<

@@ -2,3 +2,6 @@
 droidz/
 .codex/
 .omx/
+.audit/
+__pycache__/
+*.pyc

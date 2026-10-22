@@ -1,209 +1,86 @@
 # shellcheck shell=bash
-# Install flow and install-time shell function management
-install_shell_function() {
-  local prepare_status=0
-  managed_block_prepare_install \
-    "tailmux function" \
-    "$TAILMUX_BLOCK_BEGIN" \
-    "$TAILMUX_BLOCK_END" \
-    "tailmux_function_up_to_date" \
-    "tailmux_function_installed" || prepare_status=$?
-  if [[ "$prepare_status" == "10" ]]; then
-    return 0
+validate_prefix() {
+  local prefix="$1" component="$1" uid mode
+  [[ "$prefix" == /* && "$prefix" != / && "$prefix" != *$'\n'* && "$prefix" != *$'\r'* &&
+    "$prefix" != *'/../'* && "$prefix" != */.. && "$prefix" != *'/./'* && "$prefix" != */. && "$prefix" != */ ]] || {
+    rc_error 'Prefix must be an absolute directory path without dot components or line breaks' "$prefix"; return 1;
+  }
+  while [[ ! -e "$component" && ! -L "$component" ]]; do component=${component%/*}; [[ -n "$component" ]] || component=/; done
+  [[ -d "$component" ]] || { rc_error 'Prefix ancestor is not a directory' "$component"; return 1; }
+  validate_rc_path "$component/.tailmux-path-check" || return 1
+  read -r uid _ mode _ < <(rc_metadata "$component")
+  if [[ "$uid" != "$UID" || ! "$mode" =~ ^[0-7]+$ ]] || (( (8#$mode & 0022) != 0 )); then
+    rc_error 'Prefix ancestor must be privately writable and current-user owned' "$component"; return 1;
   fi
-  if [[ "$prepare_status" == "20" ]]; then
-    return 1
-  fi
-
-  print_step "Adding tailmux function to $RC_FILE"
-  append_managed_block "$TAILMUX_BLOCK_BEGIN" "$TAILMUX_BLOCK_END" "$TAILMUX_FUNC"
-  print_success "tailmux function added to $RC_FILE"
 }
 
-install_taildrive_functions() {
-  local prepare_status=0
-  managed_block_prepare_install \
-    "taildrive functions" \
-    "$TAILDRIVE_BLOCK_BEGIN" \
-    "$TAILDRIVE_BLOCK_END" \
-    "taildrive_functions_up_to_date" \
-    "taildrive_functions_installed" || prepare_status=$?
-  if [[ "$prepare_status" == "10" ]]; then
+inspect_installation() {
+  local prefix="$1" binary="$1/tailmux" receipt="$1/.tailmux-receipt" line digest
+  if [[ ! -e "$binary" && ! -L "$binary" && ! -e "$receipt" && ! -L "$receipt" ]]; then
     return 0
   fi
-  if [[ "$prepare_status" == "20" ]]; then
-    return 1
+  [[ -f "$receipt" && ! -L "$receipt" ]] || { rc_error 'Foreign or partial installation; receipt is missing' "$prefix"; return 1; }
+  validate_rc_path "$receipt" && validate_rc_metadata "$receipt" || return 1
+  { IFS= read -r line; IFS= read -r line; IFS= read -r digest; } < "$receipt" || return 1
+  if [[ ! "$digest" =~ ^[a-f0-9]{64}$ ]] || ! cmp -s "$receipt" <(printf 'tailmux-receipt-v1\n%s\n%s\n' "$binary" "$digest"); then
+    rc_error 'Foreign or modified installation receipt/content' "$prefix"; return 1;
   fi
-
-  local os_name
-  local taildrive_content="$TAILDRIVE_SHARE_FUNCS"
-  os_name="$(get_os_name)"
-  if [[ "$os_name" == "Darwin" || "$os_name" == "Linux" ]]; then
-    taildrive_content+=$'\n'"$TAILDRIVE_MOUNT_FUNCS"
+  if [[ -e "$binary" || -L "$binary" ]]; then
+    [[ -f "$binary" && ! -L "$binary" && -x "$binary" ]] || { rc_error 'Foreign or modified executable' "$binary"; return 1; }
+    validate_rc_path "$binary" && validate_rc_metadata "$binary" || return 1
+    line="$(content_digest < "$binary")" || return 1
+    [[ "${line%% *}" == "$digest" ]] || { rc_error 'Foreign or modified installation receipt/content' "$prefix"; return 1; }
   fi
-
-  print_step "Adding taildrive functions to $RC_FILE"
-  append_managed_block "$TAILDRIVE_BLOCK_BEGIN" "$TAILDRIVE_BLOCK_END" "$taildrive_content"
-  print_success "taildrive functions added to $RC_FILE"
 }
 
-print_reload_shell_hint() {
-  local os_name="${1:?missing os name}"
-  if [[ "$os_name" == "Darwin" ]]; then
-    echo "Reload your shell: source $RC_FILE (or open a new Terminal window)"
+preflight_lifecycle() {
+  local rc
+  validate_prefix "$TAILMUX_PREFIX" || return 1
+  inspect_installation "$TAILMUX_PREFIX" || return 1
+  while IFS= read -r rc; do inspect_rc "$rc" >/dev/null || return 1; done < <(rc_paths)
+}
+
+migrate_all_rc() {
+  local rc
+  while IFS= read -r rc; do migrate_rc "$rc" || return 1; done < <(rc_paths)
+}
+
+do_install() (
+  local stage='' lock="$TAILMUX_PREFIX/.tailmux-install-lock" digest published
+  preflight_lifecycle || return 1
+  [[ -f "$SCRIPT_DIR/bin/tailmux" && ! -L "$SCRIPT_DIR/bin/tailmux" ]] || { rc_error 'Local executable is missing or symlinked' "$SCRIPT_DIR/bin/tailmux"; return 1; }
+  (umask 077; mkdir -p "$TAILMUX_PREFIX") || return 1
+  validate_prefix "$TAILMUX_PREFIX" || return 1
+  (umask 077; mkdir "$lock") || { rc_error 'Installation lifecycle is locked; inspect before retrying' "$TAILMUX_PREFIX"; return 1; }
+  trap '[[ -z "$stage" ]] || { rm -f "$stage/tailmux" "$stage/receipt"; rmdir "$stage"; }; rmdir "$lock"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  preflight_lifecycle || return 1
+  stage="$(mktemp -d "$TAILMUX_PREFIX/.tailmux-stage.XXXXXX")" || return 1
+  cp "$SCRIPT_DIR/bin/tailmux" "$stage/tailmux" && chmod 755 "$stage/tailmux" || return 1
+  cmp -s "$SCRIPT_DIR/bin/tailmux" "$stage/tailmux" || return 1
+  digest="$(content_digest < "$stage/tailmux")" || return 1
+  digest=${digest%% *}
+  printf 'tailmux-receipt-v1\n%s\n%s\n' "$TAILMUX_PREFIX/tailmux" "$digest" > "$stage/receipt" || return 1
+  chmod 600 "$stage/receipt" || return 1
+  if [[ -f "$TAILMUX_PREFIX/tailmux" ]]; then
+    if ! cmp -s "$TAILMUX_PREFIX/tailmux" "$stage/tailmux"; then
+      rc_error 'A different owned version is installed; uninstall it with a reviewed checkout before replacing' "$TAILMUX_PREFIX"; return 1
+    fi
   else
-    echo "Reload your shell: source $RC_FILE (or open a new terminal)"
-  fi
-}
-
-print_taildrive_help() {
-  echo "Taildrive commands:"
-  echo "  tailshare <name> [path]"
-  echo "  tailunshare <name>"
-  echo "  tailshare-ls"
-  echo "  tailmount <host> <share> [mount_point]"
-  echo "  tailumount <host> <share> [mount_point]"
-  echo "  tailmount-ls"
-  echo "One-time ACL setup required: add nodeAttrs 'drive:share' and 'drive:access'"
-  echo "  README steps: https://github.com/ddv1982/tailmux#one-time-taildrive-acl-setup"
-  echo "  See: https://tailscale.com/kb/1369/taildrive"
-}
-
-do_install() {
-  echo ""
-  echo "tailmux setup"
-  echo "============="
-  echo ""
-  local os_name
-  os_name="$(get_os_name)"
-
-  local needs_install=false
-  local install_list=""
-  local macos_tailscale_state=""
-  local macos_tailscale_ready=false
-
-  if [[ "$os_name" == "Darwin" ]]; then
-    if ! command_exists brew; then
-      install_list+="  - Homebrew (package manager for macOS)\n"
-      needs_install=true
+    if [[ -f "$TAILMUX_PREFIX/.tailmux-receipt" ]]; then
+      cmp -s "$stage/receipt" "$TAILMUX_PREFIX/.tailmux-receipt" || { rc_error 'Interrupted installation belongs to a different source digest' "$TAILMUX_PREFIX"; return 1; }
     else
-      macos_tailscale_state="$(detect_macos_tailscale_state)"
-      if [[ "$macos_tailscale_state" == "formula" ]] && tailscale_daemon_reachable; then
-        macos_tailscale_ready=true
-      fi
-      if [[ "$macos_tailscale_ready" != true ]]; then
-        install_list+="  - Tailscale (Homebrew CLI formula for macOS)\n"
-        needs_install=true
-      fi
+      mv "$stage/receipt" "$TAILMUX_PREFIX/.tailmux-receipt" || return 1
+      cmp -s "$TAILMUX_PREFIX/.tailmux-receipt" <(printf 'tailmux-receipt-v1\n%s\n%s\n' "$TAILMUX_PREFIX/tailmux" "$digest") || { rc_error 'Published receipt verification failed' "$TAILMUX_PREFIX"; return 1; }
     fi
-  elif ! command_exists tailscale; then
-    install_list+="  - Tailscale (VPN/mesh network)\n"
-    needs_install=true
+    mv "$stage/tailmux" "$TAILMUX_PREFIX/tailmux" || return 1
+    published="$(content_digest < "$TAILMUX_PREFIX/tailmux")" || return 1
+    [[ "${published%% *}" == "$digest" && -x "$TAILMUX_PREFIX/tailmux" && ! -L "$TAILMUX_PREFIX/tailmux" ]] || { rc_error 'Published executable verification failed' "$TAILMUX_PREFIX"; return 1; }
   fi
-  if ! command_exists tmux; then
-    install_list+="  - tmux (terminal multiplexer)\n"
-    needs_install=true
-  fi
-  local tailmux_refresh_needed=false
-  if ! tailmux_function_installed; then
-    install_list+="  - tailmux shell function (added to $RC_FILE)\n"
-    needs_install=true
-  elif ! tailmux_function_up_to_date; then
-    tailmux_refresh_needed=true
-  fi
-  local taildrive_missing=false
-  local taildrive_refresh_needed=false
-  if ! taildrive_functions_installed; then
-    taildrive_missing=true
-  elif ! taildrive_functions_up_to_date; then
-    taildrive_refresh_needed=true
-  fi
-  if [[ "$needs_install" == false ]]; then
-    local taildrive_installed_now=false
-    print_success "Core setup is already installed!"
-    if [[ "$tailmux_refresh_needed" == true ]]; then
-      install_shell_function
-    fi
-    if command_exists tailscale || { [[ "$os_name" == "Darwin" ]] && command_exists brew; }; then
-      if ! install_tailscale; then
-        print_warning "Could not reconcile Tailscale with current dependency policy."
-      fi
-    fi
-    if [[ "$taildrive_refresh_needed" == true ]]; then
-      install_taildrive_functions
-      taildrive_installed_now=true
-    elif [[ "$taildrive_missing" == true ]]; then
-      echo ""
-      if confirm "Install optional taildrive file sharing functions? [y/N]" "n"; then
-        ensure_taildrive_mount_dependencies "$os_name"
-        install_taildrive_functions
-        taildrive_installed_now=true
-      fi
-    fi
-    _hint_available_updates
-    echo ""
-    print_reload_shell_hint "$os_name"
-    if command_exists tailscale; then
-      echo "If not authenticated yet, run: sudo tailscale up --ssh"
-    fi
-    echo "Usage: tailmux <hostname>"
-    echo "       tailmux doctor <hostname>"
-    if [[ "$taildrive_installed_now" == true || "$taildrive_missing" == false ]]; then
-      echo ""
-      print_taildrive_help
-    fi
-    return 0
-  fi
-
-  echo "This will install:"
-  printf "%b" "$install_list"
-  echo ""
-
-  if ! confirm "Continue? [Y/n]" "y"; then
-    echo "Setup cancelled."
-    exit 0
-  fi
-
-  if [[ "$os_name" == "Darwin" ]] && ! command_exists brew; then
-    install_homebrew
-  fi
-
-  install_tailscale
-  install_tmux
-  install_shell_function
-
-  local taildrive_installed=false
-  if [[ "$taildrive_refresh_needed" == true ]]; then
-    install_taildrive_functions
-    taildrive_installed=true
-  elif [[ "$taildrive_missing" == true ]]; then
-    echo ""
-    if confirm "Install taildrive file sharing functions? [y/N]" "n"; then
-      ensure_taildrive_mount_dependencies "$os_name"
-      install_taildrive_functions
-      taildrive_installed=true
-    fi
-  fi
-
-  echo ""
-  print_success "Setup complete!"
-  echo ""
-  echo "Next steps:"
-  local step=1
-  echo "  $step. Authenticate with Tailscale and enable Tailscale SSH: sudo tailscale up --ssh"
-  echo "     (Opens browser for login - required first time)"
-  ((step++))
-  if [[ "$os_name" == "Linux" ]]; then
-    echo "  $step. After login, enable passwordless access: sudo tailscale set --operator=\$USER"
-    ((step++))
-  fi
-  echo "  $step. Open a new terminal, or run: source $RC_FILE"
-  ((step++))
-  echo "  $step. Connect: tailmux <hostname>"
-  echo "     Diagnose resolution issues: tailmux doctor <hostname>"
-  if [[ "$taildrive_installed" == true ]]; then
-    echo ""
-    print_taildrive_help
-  fi
-  echo ""
-}
+  inspect_installation "$TAILMUX_PREFIX" || return 1
+  migrate_all_rc || return 1
+  printf 'Client installed at %s/tailmux\n' "$TAILMUX_PREFIX"
+  printf '%s\n' 'Warning: your current shell may shadow bare tailmux with an alias or loaded function. Use the absolute executable path.' \
+    'No PATH or shell code was added. Dependencies and destination SSH/tmux configuration remain operator-owned.'
+)
