@@ -37,7 +37,8 @@ class WorkflowTests(unittest.TestCase):
                 tool.write_text('#!/bin/sh\n: > "$FORBIDDEN"\nexit 99\n')
                 tool.chmod(0o700)
             env = {'PATH': str(fake) + os.pathsep + os.path.dirname(sys.executable) + ':/usr/bin:/bin',
-                   'EXPECTED_SOURCE_SHA': 'a' * 40, 'FORBIDDEN': str(marker)}
+                   'EXPECTED_SOURCE_SHA': 'a' * 40, 'TAG': 'v1.2.3',
+                   'REVIEWED_WAIVER_SHA256': __import__('hashlib').sha256(b'').hexdigest(), 'FORBIDDEN': str(marker)}
             result = subprocess.run(['/bin/bash', '-e', '-c', command + '\nprintf should-not-build'],
                                     cwd=ROOT, env=env, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 2, result.stderr)
@@ -120,8 +121,13 @@ class WorkflowTests(unittest.TestCase):
             lambda d: d['jobs']['publish']['steps'][4]['with'].update({'push-to-registry': True}),
             lambda d: d['jobs']['publish']['steps'][4]['with'].update({'create-storage-record': True}),
             lambda d: d['jobs']['publish']['steps'][4].update(uses='actions/attest@v4'),
-            lambda d: d['jobs']['publish']['steps'][5]['with'].update(path='unattested.tar.gz'),
-            lambda d: d['jobs']['publish']['steps'][6].update(run='gh release create latest'),
+            lambda d: d['jobs']['publish']['steps'][6]['with'].update(path='unattested.tar.gz'),
+            lambda d: d['jobs']['publish']['steps'][7].update(run='gh release create latest'),
+            lambda d: d['jobs']['publish']['steps'][5]['env'].update(BUNDLE_PATH='untrusted.json'),
+            lambda d: d['jobs']['publish']['env'].update(RELEASE_LIVE_ONLY_WAIVER='skip'),
+            lambda d: d['jobs']['publish']['env'].pop('REVIEWED_WAIVER_SHA256'),
+            lambda d: d['jobs']['preflight']['outputs'].pop('waiver_sha256'),
+            lambda d: d['jobs']['publish']['permissions'].pop('checks'),
             lambda d: d['jobs']['publish']['steps'].insert(1, {'run': 'gh release create early'}),
         ]
         for index, change in enumerate(changes):

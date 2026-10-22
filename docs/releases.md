@@ -1,12 +1,24 @@
 # Verify and prepare a release
 
-Use a separately trusted checkout of the release tools. The verifier needs Python 3 and an independently installed, trusted GitHub CLI with the flags below. These are release tools, not Tailmux runtime dependencies. The release maintainer owns their updates. The reviewed CLI flag contract was checked with `gh 2.100.0`. That version observation does not establish patch status.
+Tailmux supports a no-checkout direct installer for macOS and Linux. The published install block pins one version, an independently reviewed full source commit, the signing workflow, and certificate publisher IDs. Obtain that block through a channel you trust. Its literals are the first trust boundary. A compromised command distribution channel can replace those expectations.
 
-## Verify before installation
+The release-source checkout cannot contain its own commit SHA. This source therefore documents the protocol and supports local checkout installation. After the reviewed source S exists, the maintainer generates the literal command and adds it in a documentation-only descendant D. The release tag, installer, archive, and workflow remain at S. There is no runnable placeholder command in this source README.
 
-1. Obtain the exact version tag and full source commit through an independent reviewed channel. Do not derive the expected commit from the archive, its manifest, an adjacent checksum, or a mutable `latest` reference.
-2. Download the versioned `tailmux-vVERSION.tar.gz` release asset. Keep it unopened.
-3. From your trusted checkout, run the command below. Substitute the independently expected tag and 40-character lowercase source SHA. Use a current-user output directory without group or other write access.
+## Install from authenticated release assets
+
+The direct block requires independently installed, trusted Python 3.11 or later, gh 2.103.0 or later with the reviewed verification flags, jq, curl 8.4.0 or later, Bash, and OS utilities. Install or update those tools through their existing owners before using the block. No Python packages or GitHub login are required for the explicit bundle path. Standard Sigstore trust metadata can still require network access.
+
+The block refuses root and unsupported platforms. Before downloads, it validates temporary-directory ancestry and creates private staging. It downloads only the exact versioned installer and standard Sigstore bundle over HTTPS, with bounded redirects, time, and bytes. curl configuration is disabled. curl 8.4.0 is the minimum because earlier versions cannot enforce the size limit during unknown-length transfers.
+
+Trusted gh authenticates the installer before Python executes it. Successful verifier JSON must be a nonempty array. Every result's `verificationResult.signature.certificate` must contain string `sourceRepositoryIdentifier` equal to `1144643418` and string `sourceRepositoryOwnerIdentifier` equal to `240215896`. Missing, null, numeric, mixed, and wrong IDs fail. These fields come from successful standard verification, not the workflow-controlled predicate or raw bundle.
+
+The authenticated installer downloads exactly `tailmux-TAG.tar.gz`. It authenticates a private archive snapshot with the same constraints before gzip or archive parsing. It then invokes the packaged local `setup.sh` with a clean subprocess environment. Setup retains ownership of destination safety, locking, receipts, retries, and legacy shell-block migration. It installs only the user-owned executable and receipt. It adds no PATH code, provisions no dependencies, and uses no sudo. A different installed version requires the existing reviewed uninstall procedure before replacement.
+
+The three release assets are `tailmux-TAG-installer.py`, `tailmux-TAG.tar.gz`, and `tailmux-TAG.sigstore.json`. The installer is the exact committed bytes of `scripts/release/package.py`. The archive and installer are explicit subjects of the pinned standard attestation action. The bundle is copied unchanged from that action's `bundle-path` output.
+
+## Verify with a trusted checkout
+
+The existing manual verifier remains available. Obtain the exact tag and full source commit independently. Do not derive the expected commit from the downloaded manifest, an adjacent checksum, a tag lookup, or `latest`. Download the archive as inert bytes. From a separately trusted checkout, run:
 
 ```sh
 python3 /trusted/tailmux/scripts/release/package.py verify \
@@ -15,27 +27,19 @@ python3 /trusted/tailmux/scripts/release/package.py verify \
   --output-parent /private/output
 ```
 
-A successful command prints a new private `tailmux-verified-*` directory. Inspect its manifest and files. Then install explicitly with `bash /private/output/tailmux-verified-.../setup.sh install`. The verifier never installs, sources, or runs archive content. Never use a verifier from the downloaded package to authenticate that package. The package deliberately excludes release verification tools.
+The placeholders above describe inputs, not a finalized release identity. Without `--bundle`, this uses the existing online gh verification path and needs gh authentication. To use the explicit anonymous bundle path, add `--bundle /downloads/tailmux-vVERSION.sigstore.json`. There is no automatic fallback after failed verification.
 
-The trusted verifier copies at most 8 MiB into a private temporary snapshot and runs the standard verifier before any gzip or tar parsing:
+A successful verifier prints a new private `tailmux-verified-*` directory. Inspect its manifest and files. Install through `bash /private/output/tailmux-verified-.../setup.sh install`, with an optional absolute `--prefix`. The manual `verify` subcommand never executes archive content. Never use a verifier downloaded with an unauthenticated package to authenticate that package.
 
-```sh
-gh attestation verify SNAPSHOT \
-  --repo ddv1982/tailmux \
-  --signer-workflow ddv1982/tailmux/.github/workflows/release.yml \
-  --signer-digest EXPECTED_FULL_SOURCE_SHA \
-  --source-ref refs/tags/EXPECTED_TAG \
-  --source-digest EXPECTED_FULL_SOURCE_SHA \
-  --deny-self-hosted-runners
-```
+Both paths invoke trusted `gh attestation verify` with `--hostname github.com`, fixed repository `ddv1982/tailmux`, signer workflow `ddv1982/tailmux/.github/workflows/release.yml`, independently expected signer digest and source digest, exact `refs/tags/TAG`, `--deny-self-hosted-runners`, and `--format json`. Both enforce the certificate IDs above. Bundle verification binds historical certificate names and immutable IDs. It does not establish the online API's current repository-name mapping after renames.
 
-Failure rejects the package. There is no checksum-only or unsigned fallback. Repository, signer, source, hosted-runner identity, and artifact digest are constrained through GitHub's standard SLSA attestation verification. The trusted checkout, installed `gh`, Python, host, and independent expected identity remain prerequisites.
+## Canonical archive format
 
-After successful attestation verification, the tool accepts only the canonical `tailmux-portable-v1` USTAR layout. It bounds expanded bytes at 16 MiB, each payload at 2 MiB, and the manifest at 32 KiB. It requires exactly 20 regular members in a fixed order. It rejects extensions including PAX, GNU long names and sparse records, duplicate or colliding names, links, directories, devices, FIFOs, traversal, absolute paths, unsupported metadata, unexpected members, nonzero padding, and malformed terminators. It hashes every payload before creating the output stage or writing any payload. A new stage has mode `0700`. Existing output is never overwritten.
+Authentication precedes the sole strict parser. Compressed bytes are limited to 8 MiB, expanded bytes to 16 MiB, each payload to 2 MiB, and the manifest to 32 KiB. The parser accepts exactly 20 regular USTAR members in a fixed order. It refuses extensions, links, directories, devices, FIFOs, traversal, duplicate or unexpected paths, unsupported metadata, malformed padding, and terminators. Every payload hash is checked before a stage or payload is written.
 
-The canonical JSON manifest records `format`, `version`, `source_sha`, and `members`. Each member record contains its exact `size` and lowercase SHA-256 `sha256`. Duplicate keys, extra fields, unexpected paths, and noncanonical encodings fail. Paths and modes are fixed by this format. `bin/tailmux` alone has mode `0755`; every other regular member, including `setup.sh`, has mode `0644`. Run `setup.sh` through Bash.
+The canonical manifest records `format`, `version`, `source_sha`, and `members`. Member records contain exact `size` and lowercase SHA-256 `sha256`. Duplicate keys, extra fields, and noncanonical encodings fail. The new stage has mode `0700`. `bin/tailmux` alone has mode `0755`. Other files, including `setup.sh`, have mode `0644`.
 
-The manifest is followed by these payloads in order:
+`manifest.json` precedes these payloads:
 
 ```text
 LICENSE
@@ -59,56 +63,72 @@ scripts/lib/uninstall.sh
 setup.sh
 ```
 
-## Prepare publication
+The builders read committed Git blobs only. Working-tree changes and `.audit` data cannot enter either executable asset. Three literal versions must match the requested tag. The same Python and zlib implementation produces the same archive bytes for the same source. Cross-version compression equivalence is not promised. Outputs are created exclusively.
 
-Publication is not authorized by this guide. Release requires independently reviewed source, existing repository protections, protected environment approval, and exact acceptance evidence. Local fake-verifier tests do not satisfy those gates.
+## Prepare stable v0.2.0
 
-The protected `release` environment supplies `ACCEPTANCE_SOURCE_SHA`, `ACCEPTANCE_ARTIFACT_ID`, `ACCEPTANCE_ARCHIVE_SHA256`, and `ACCEPTANCE_REQUEST_SHA256`. Its approver reviews the exact evidence and digests before approving the publisher job. An artifact ID locates bytes and does not authenticate them. The gate downloads bounded evidence, checks its approved digest before unpacking, and requires complete evidence for the exact source and merge base. Missing, stale, malformed, incomplete, or inconclusive evidence rejects before package build, attestation, or publication.
+The parent release owner performs publication and repository changes. This guide grants no authority. Source-bound independent code review, actual exact-source successful hosted CI, explicit owner approval, source identity, and artifact authentication remain required. A sole maintainer's GitHub approval is owner authorization and does not claim independent human review.
 
-The gate's successful output establishes structural completeness only. It always retains `NOT_VERIFIED`. The protected operator must independently establish real execution, native screenshots/video, performance evidence, and review truth. JSON declarations and fake fixtures cannot provide that proof. See [acceptance and protected custody](acceptance.md). At release, the reviewed source is already an ancestor of main, so its merge base with fetched main equals the source SHA. The release workflow requires that exact value in the evidence.
+1. Review the final source S. Keep `VERSION`, `bin/tailmux`, and `setup.sh` at `0.2.0`. Protect the independent repository variable `RELEASE_SOURCE_SHA` and set it to S. Do not infer S from the release event or tag.
+2. Require PRs on main with zero GitHub approval reviews, stale-review dismissal, resolved review threads, and no last-push approval requirement. Require strict `full-linux`, `full-macos`, and `workflow-policy` checks from GitHub Actions app `15368`. Independent code review is recorded separately against S.
+3. Establish the `release` environment with exactly User `82675328` as required reviewer, `prevent_self_review=false`, and exactly one tag deployment policy named `v0.2.0`. No branch or wildcard deployment policy is accepted. This exact policy intentionally limits this release preparation to v0.2.0.
+4. Preserve version tags with active repository rules forbidding updates and deletion, without exclusions or bypass actors. Readback accepts the exact tag, `refs/tags/v*`, or all tags. The read-only API can omit bypass actors. The release owner records their authorized readback separately.
+5. Record the environment administrator-bypass state only if an authorized observable source establishes it. The documented environment GET response does not expose it. An unavailable settings page supplies no proof. Do not invent disabled bypass or independent GitHub human approval.
+6. For normal releases, supply real exact-source acceptance evidence through the existing protected variables. For this v0.2.0 only, the operator may instead set repository variable `RELEASE_LIVE_ONLY_WAIVER` to the exact record below, replacing its source value with S. Missing live acceptance remains `NOT_VERIFIED` in [compatibility](compatibility.md). This exception waives live acceptance only.
+7. Create the lightweight `v0.2.0` tag at S and let its push start the publisher. Review the captured source, main, waiver digest, controls, independent review, and successful source CI before explicitly approving the release environment as the owner.
+8. After publication, independently authenticate both installer and archive as a consumer. Record actual verification output, source and asset digests, owner approval, and remaining live evidence gaps.
 
-1. Review the exact source commit. Keep `VERSION`, the binary's literal `TAILMUX_VERSION`, and the installer's literal `TAILMUX_VERSION` equal to the tag without its leading `v`. The builder checks all three without executing them.
-2. Have a repository administrator establish the existing `release` environment before running a tag workflow. Configure required reviewers, prevent self-review, disable administrator bypass, and permit only the `v*` tag deployment policy. No branch deployment policy is accepted.
-3. Require active main rulesets for fresh independent PR approval, stale approval dismissal, last-push approval, and strict required status checks. Required contexts are `full-linux`, `full-macos`, and `workflow-policy`, bound to the GitHub Actions app, ID `15368`. Classic branch protection alone does not satisfy this read-only ruleset check.
-4. Independently confirm the source was reviewed. Administrative custody must protect the repository variable `RELEASE_SOURCE_SHA`. Set it to that exact reviewed commit before pushing the version tag. Keep any environment override identical. The variable must never come from the event SHA, an archive, or a tag lookup. GitHub variable YAML does not itself establish restricted custody.
-5. Confirm the environment's administrator-bypass setting and ruleset bypass actors manually. The environment GET API does not prove administrator-bypass configuration. Record that operator gate outside the workflow. Active rules and ancestry do not prove historical review of a commit.
-6. Complete the separate acceptance checklist and review the final head before publication. No settings changes or publication were performed by this implementation.
+The external waiver record has exactly these fields and types:
 
-The unprivileged `preflight` job has no environment and only contents/actions read. It uses GET requests for the environment, all deployment-policy pages, main, and all active main-rule pages. API failures, missing fields, absent reviewers, disabled self-review prevention, weak deployment restrictions, unprotected main, missing approval rules, and missing or wrongly attributed required checks reject the release. The last repository investigation found no environments and an unprotected main. Those settings must refuse publication.
+```json
+{
+  "schema": "tailmux-live-only-waiver-v1",
+  "repository": "ddv1982/tailmux",
+  "tag": "v0.2.0",
+  "source_sha": "FINAL_40_LOWERCASE_HEX_SOURCE_SHA",
+  "scope": "live-acceptance-only",
+  "live_acceptance": "NOT_VERIFIED",
+  "operator_id": 82675328,
+  "reason": "User explicitly requested stable 0.2.0 without waiting for the live test."
+}
+```
 
-The privileged job depends on successful preflight and protected environment approval. It has only contents write, attestations write, id-token write, and actions read for repeated protection checks. It repeats the checks after approval and refuses a changed main SHA or changed expected source. Naming an environment is not proof of protection. GitHub does not document environment-object creation timing relative to dependency evaluation, so this workflow cannot prove that no environment object is created during a rejected run. If that prohibition is required, an operator must run the read-only preflight before triggering the workflow.
+The source value above is documentation, not an accepted SHA. The parser rejects duplicates, extra or missing fields, wrong types or values, oversized records, other tags, and a different source. The SHA-256 of the exact variable bytes is captured before approval and compared afterward. A missing value selects the unchanged real acceptance validator. An invalid value fails closed. The separate selector never fabricates evidence or makes the acceptance validator accept absent evidence.
 
-Both jobs require a hosted runner and agreement among the independently expected source, event SHA, peeled tag commit, checkout HEAD, workflow SHA, and exact `release.yml@refs/tags/TAG` identity. The source must be an ancestor of the captured main SHA. The workflow runs from the version tag itself. It does not dispatch from main and then check out another ref.
+The unprivileged job reads environment protections, active main rules, tag-preservation rules, and exact-source CI. It requires the latest CI push run at S to complete successfully and independently checks each required job and its app-attributed check run. Skipped, missing, wrong-source, wrong-workflow, wrong-app, or unsuccessful work rejects publication. Minimum read permissions cover contents, Actions, and checks.
 
-The builder reads only the fixed payload paths from committed Git blobs. Working-tree changes cannot enter the package. File modes, manifest order, timestamps, ownership, USTAR headers, and gzip timestamp/name are fixed. The same Python/zlib implementation produces identical bytes for the same source. Cross-version zlib compression equivalence is not promised. The output archive is created exclusively and is attested before upload and publication. No custom signing, release hooks, runtime updater, registry upload, or storage record is added.
+The publisher repeats every check after owner approval. It refuses a changed expected source, captured main, or waiver bytes. Both jobs bind the tag push, hosted runner, event SHA, workflow SHA and ref, checkout HEAD, peeled tag, independent S, and source ancestry to captured main. It never dispatches from main and checks out another source. It then builds exact subjects, attests them, copies the standard bundle, and publishes all three explicit assets with `--verify-tag --prerelease=false --latest`. Release-exists failures require owner inspection. There is no overwrite or delete-and-republish automation.
+
+After S exists, generate its literal install block from trusted source tools:
+
+```sh
+python3 scripts/release/package.py bootstrap-command \
+  --tag v0.2.0 --source-sha INDEPENDENTLY_REVIEWED_SOURCE_SHA > /private/install-command.sh
+```
+
+Review the output and add it only in documentation descendant D or another separately reviewed distribution channel. The generator validates explicit inputs. It does not discover or authenticate the expected source for the operator.
 
 ## Check the infrastructure locally
 
-Use Python 3.11 through 3.14 for development dependency wheels. `requirements-dev.txt` pins PyYAML 6.0.3 with hashes for Linux and macOS wheels. Install it only in your development environment. Tailmux does not import it at runtime. The policy loader rejects duplicate keys, anchors, aliases, and merges. It preserves `on` as a string and resolves only true/false as booleans.
-
-Run the local checks:
+Development dependencies support Python 3.11 through 3.14. Use the hashed `requirements-dev.txt` in a development environment. PyYAML is only for workflow policy. No Python package is needed by the installer or runtime.
 
 ```sh
-python3 scripts/release/check_workflows.py
-actionlint -oneline .github/workflows/*.yml
-python3 scripts/tests/suites/workflow_policy.py
-python3 scripts/tests/suites/release_cli.py
-python3 scripts/tests/suites/release_preflight.py
 bash scripts/tests/run.sh full
+actionlint -oneline .github/workflows/*.yml
 ```
 
-CI runs the complete Linux and macOS suites as blocking jobs. Runner package owners install jq and ShellCheck. The Linux policy job installs hashed development wheels and verifies the pinned actionlint 1.7.12 distribution digest before execution. No `pull_request_target`, release token permissions, protected environment, or live-tailnet secrets are supplied to PR tests. Repository settings must separately make these job contexts required. Workflow YAML alone does not establish a merge gate.
+CI runs the same full suite on Linux and macOS. It includes the rendered bootstrap, actual installer CLI, installed executable, failure paths, and retry. Downloads, gh verification, and host commands are isolated fixtures. Fixtures prove behavior and sequencing, not real signatures, hosted publication, or live SSH compatibility. The policy job also checks workflow syntax and mutation tests. Repository settings separately make the checks mandatory.
 
-Action updates use reviewed full SHA pins for Node 24 checkout, attestation, and artifact upload. Checkout disables credential persistence. Use hosted runners supporting the pinned checkout's runner requirements. Dependabot proposes weekly action and development dependency updates. Review new SHAs, Node runtime and runner compatibility, hashes, semantic policy, and actionlint before accepting an update. The policy deliberately rejects unreviewed pins until its reviewed registry is updated.
+Pinned actions disable persisted checkout credentials. The publisher disables registry upload and storage records. Review action updates, development hashes, runner compatibility, policy, and actionlint together. No PR test receives protected environment access or tailnet secrets.
 
-The tests use fake `gh` and API responses to prove invocation constraints, refusal behavior, sequencing, and output isolation. The controlled temporary Git fixture proves the real committed-object builder, modes, version agreement, and deterministic output. It does not create a release tag or commit in the project checkout. None of these tests proves real signature acceptance, protected publisher execution, fork-event isolation, Linux/macOS live installation, or platform performance. Those remain acceptance gates.
+## Recover an installation
 
-## Recover the first release
+Stop using a faulty candidate. Use its reviewed uninstall path to remove receipt-owned client files while preserving configuration. Networking identity, daemons, packages, server settings, and tailnet policy remain with their operators.
 
-Withdraw or remove a failed candidate through its release owner. Stop using the installed candidate and disable connections. Use a reviewed checkout's uninstall path to remove the owned binary while preserving configuration. Do not change Tailscale identity, daemon state, packages, server settings, or policy as part of recovery.
-
-There is no previous authenticated operational artifact yet. A separately authenticated test fixture can prove rollback mechanics, but it cannot supply a nonexistent published rollback. Restore an earlier artifact only when it actually exists, independently matches the expected source, and passes the same trusted verification. Otherwise keep connections disabled until an independently reviewed recovery build is ready. No recovery may restore raw SSH fallback, mounting, provisioning, or caller PATH transfer.
+There is no previous authenticated operational artifact recorded in this source. Restore an earlier release only when it exists, independently matches its expected identity, and passes the same verification. Otherwise use a reviewed recovery checkout with connections disabled until recovery is accepted. Recovery must preserve fail-closed resolution, the single Tailscale SSH transport, and operator-owned provisioning.
 
 ## Source contracts
 
-The reviewed [GitHub CLI verification flags](https://cli.github.com/manual/gh_attestation_verify) define the standard verifier boundary. GitHub documents [environment reads](https://docs.github.com/en/rest/deployments/environments) and [active branch rule reads](https://docs.github.com/en/rest/repos/rules). The pinned [attestation action inputs](https://github.com/actions/attest/blob/1e69f48acb82d1966a394da916b4c1698aa569d6/action.yml) define the archive subject and disabled registry/storage behavior.
+The official [gh verification manual](https://cli.github.com/manual/gh_attestation_verify) documents successful JSON and verification constraints. GitHub's [offline guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/verify-attestations-offline) explains certificate repository-ID checks. The reviewed [gh 2.103.0 source](https://github.com/cli/cli/blob/7948e8056e45ac3c729b829e0eafe2d0797a95c6/pkg/cmd/attestation/verify/verify.go) defines the bundle login exemption and flag contract. The [curl manual](https://curl.se/docs/manpage.html#--max-filesize) defines transfer size enforcement.
+
+GitHub documents [environment reads](https://docs.github.com/en/rest/deployments/environments), [ruleset reads and bypass visibility](https://docs.github.com/en/rest/repos/rules), [workflow runs](https://docs.github.com/en/rest/actions/workflow-runs), [jobs](https://docs.github.com/en/rest/actions/workflow-jobs), and [check runs](https://docs.github.com/en/rest/checks/runs). The pinned [attestation action](https://github.com/actions/attest/blob/1e69f48acb82d1966a394da916b4c1698aa569d6/action.yml) defines subject paths and the standard bundle output.
