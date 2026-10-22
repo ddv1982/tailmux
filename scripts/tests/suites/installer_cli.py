@@ -244,18 +244,16 @@ esac
         self.assertFalse((self.prefix / '.tailmux-receipt').exists())
 
     def test_actual_interruption_retains_receipt_and_recovers(self):
-        pidfile = self.root / 'publisher-pid'
         ready = self.root / 'publisher-ready'
         real_mv = shutil.which('mv')
         self.script('mv', '''#!/bin/bash
 if [[ "$1" == *tailmux-stage*/tailmux ]]; then
-  printf '%s\\n' "$$" > "$PUBLISHER_PID"
   : > "$PUBLISHER_READY"
   exec /bin/sleep 30
 fi
 exec "''' + real_mv + '''" "$@"
 ''')
-        env = dict(self.env, PUBLISHER_PID=str(pidfile), PUBLISHER_READY=str(ready))
+        env = dict(self.env, PUBLISHER_READY=str(ready))
         p = subprocess.Popen(['/bin/bash', str(SETUP), 'install'], env=cli_environment(self.bin, env),
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         try:
