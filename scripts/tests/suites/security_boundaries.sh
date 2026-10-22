@@ -82,7 +82,7 @@ DRIVER
   pass "fixed remote command, hostile PATH corpus, IPv6, attach-any, new, and missing tmux"
 )
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 security_mount_fixture() {
   security_calls_file="$1"
   source "$REPO_ROOT/scripts/lib/taildrive_templates.sh"
