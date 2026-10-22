@@ -2,59 +2,72 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: ['**']
   pull_request:
-    branches: ["**"]
+    branches: ['**']
+
+permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
-      - name: Run lint suite
-        run: bash scripts/tests/run.sh lint
-
-  core-linux:
-    runs-on: ubuntu-latest
+  workflow-policy:
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Run core suites (Linux)
-        run: bash scripts/tests/run.sh quick
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install development tools
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements-dev.txt
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output /tmp/actionlint.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tar.gz' | sha256sum --check --strict
+          mkdir /tmp/actionlint-bin
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp/actionlint-bin actionlint
+      - name: Validate workflow and release boundaries
+        run: |
+          .venv/bin/python scripts/release/check_workflows.py
+          /tmp/actionlint-bin/actionlint -oneline .github/workflows/*.yml
+          .venv/bin/python scripts/tests/suites/workflow_policy.py
+          python3 scripts/tests/suites/release_cli.py
+          python3 scripts/tests/suites/release_preflight.py
 
-  core-macos:
-    runs-on: macos-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run core suites (macOS)
-        run: bash scripts/tests/run.sh quick
-
-  extended-linux:
-    runs-on: ubuntu-latest
+  full-linux:
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
-    continue-on-error: true
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
-      - name: Run extended suites (Linux advisory)
-        run: bash scripts/tests/run.sh full
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install test dependencies through the runner package owner
+        run: sudo apt-get update -qq && sudo apt-get install -y jq shellcheck
+      - name: Run complete Linux suite
+        run: |
+          bash scripts/tests/run.sh full
+          python3 scripts/tests/suites/release_cli.py
+          python3 scripts/tests/suites/release_preflight.py
 
-  extended-macos:
-    runs-on: macos-latest
+  full-macos:
+    runs-on: macos-15
     timeout-minutes: 30
-    continue-on-error: true
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Install shellcheck
-        run: brew install shellcheck
-      - name: Run extended suites (macOS advisory)
-        run: bash scripts/tests/run.sh full
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install test dependencies through the runner package owner
+        run: brew list jq shellcheck >/dev/null 2>&1 || brew install jq shellcheck
+      - name: Run complete macOS suite
+        run: |
+          bash scripts/tests/run.sh full
+          python3 scripts/tests/suites/release_cli.py
+          python3 scripts/tests/suites/release_preflight.py

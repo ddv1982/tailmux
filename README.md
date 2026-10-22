@@ -5,7 +5,8 @@ It attaches to any existing session, or creates one when attachment fails.
 
 ## Install the local client
 
-Use a reviewed local checkout:
+Use a reviewed local checkout. For future release packages, follow [publisher verification](docs/releases.md) before unpacking or executing content:
+
 
 ```bash
 bash setup.sh install
