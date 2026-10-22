@@ -6,85 +6,62 @@ Both Linux and macOS can manage shares via CLI (`tailshare`, `tailshare-ls`) and
 
 **Note for macOS:** This installer uses the open-source Homebrew `tailscale` formula (CLI-only, no menu bar icon) to enable full `tailscale drive` CLI support. If a standalone/App Store install is detected, setup stops and asks you to remove it first to avoid conflicts. If you prefer the GUI app, see [Tailscale macOS variants](https://tailscale.com/kb/1065/macos-variants), but note that GUI apps cannot use `tailscale drive` from the command line.
 
-## One-Time ACL Setup
+## Configure read-only access
 
-Taildrive requires two things in your [Tailscale ACL policy](https://login.tailscale.com/admin/acls): `nodeAttrs` to enable the feature, and a grant to define who can access which shares. Open the [Access Controls](https://login.tailscale.com/admin/acls) page and add/merge the sections below.
+This example lets `group:devs` read the named `myproject` share on devices tagged `tag:fileserver`.
+Define that group and tag in your existing [Tailscale policy](https://login.tailscale.com/admin/acls), with only the intended readers and sharing devices.
 
-If your policy already has `nodeAttrs` or `grants`, merge the entries into the existing arrays — do not add duplicate top-level keys.
+Append these `nodeAttrs` entries to your existing array. They enable access for the readers and sharing for the file server.
 
-<details>
-<summary>Add to <code>nodeAttrs</code></summary>
-
-```jsonc
+```json
 {
-  // Any device can access shared directories with Taildrive
-  "target": ["*"],
-  "attr": ["drive:access"]
-},
-{
-  // Only tailnet admins can use Taildrive to share directories
-  "target": ["autogroup:admin"],
-  "attr": ["drive:share", "drive:access"]
+	"nodeAttrs": [
+		{
+			"target": ["group:devs"],
+			"attr": ["drive:access"]
+		},
+		{
+			"target": ["tag:fileserver"],
+			"attr": ["drive:share"]
+		}
+	]
 }
 ```
 
-- `drive:share` — permission to create and manage shared folders
-- `drive:access` — permission to access shared folders from other devices
+Append this application grant to your existing `grants` array.
+Keep your existing network rules. This example adds no network grant.
+Do not replace your complete policy or add duplicate top-level keys.
+Existing broader grants can still permit additional access, so review them too.
 
-</details>
-
-<details>
-<summary>Add to <code>grants</code></summary>
-
-Your `grants` array likely already has `ip`-based network grants. The Taildrive entry uses `app` instead of `ip` — they don't overlap, so keep your existing entries and append the Taildrive grant:
-
-```jsonc
-"grants": [
-    // your existing network grants
-    {
-        "src": ["*"],
-        "dst": ["*"],
-        "ip":  ["*"],
-    },
-    {
-        "src": ["autogroup:member"],
-        "dst": ["autogroup:member"],
-        "ip":  ["*"],
-    },
-    // Taildrive: members can read/write all shares on their own devices
-    {
-        "src": ["autogroup:member"],
-        "dst": ["autogroup:self"],
-        "app": {
-            "tailscale.com/cap/drive": [
-                { "shares": ["*"], "access": "rw" }
-            ]
-        }
-    },
-],
+```json
+{
+	"grants": [
+		{
+			"src": ["group:devs"],
+			"dst": ["tag:fileserver"],
+			"app": {
+				"tailscale.com/cap/drive": [
+					{ "shares": ["myproject"], "access": "ro" }
+				]
+			}
+		}
+	]
+}
 ```
 
-</details>
+| Field | Example | Meaning |
+|-------|---------|---------|
+| `src` | `["group:devs"]` | Readers allowed by this grant |
+| `dst` | `["tag:fileserver"]` | Devices that host the share |
+| `shares` | `["myproject"]` | The permitted share name |
+| `access` | `"ro"` | Read-only access |
 
-<details>
-<summary>Customize the Taildrive grant</summary>
+To permit edits, change `"access": "ro"` to `"access": "rw"` for this named share.
+Review the group's membership before granting write access.
 
-| Field | Example | Description |
-|-------|---------|-------------|
-| `src` | `["autogroup:member"]`, `["group:devs"]` | Who can access |
-| `dst` | `["autogroup:self"]`, `["tag:fileserver"]`, `["*"]` | Whose shares to access |
-| `shares` | `["*"]`, `["projects", "docs"]` | Which share names (`*` = all) |
-| `access` | `"rw"`, `"ro"` | Read-write or read-only |
-
-</details>
-
-After saving the policy, verify with:
-
-```bash
-tailscale drive list
-```
-
-See the [Taildrive docs](https://tailscale.com/docs/features/taildrive) and [grants app capabilities](https://tailscale.com/kb/1537/grants-app-capabilities) for more details.
+After saving the policy, list your shares with `tailscale drive list`.
+Test access from an intended reader before relying on the configuration.
+See the [Taildrive docs](https://tailscale.com/docs/features/taildrive) and [application capability grants](https://tailscale.com/kb/1537/grants-app-capabilities) for policy details.
 
 ## Usage
 
@@ -134,6 +111,9 @@ Taildrive share names should be simple and portable:
 | `tailmount <host> <share> [mount_point]` | Mount a share on macOS/Linux (defaults to `~/taildrive/<host>/<share>`) |
 | `tailumount <host> <share> [mount_point]` | Unmount a share |
 | `tailmount-ls` | List mounted shares |
+
+Explicit `mount_point` values must be absolute paths. Quote paths that contain spaces.
+`tailmount` and `tailumount` reject empty, relative, and option-shaped values before running utilities.
 
 **Linux prerequisite:** Linux mounting uses `davfs2` (`mount -t davfs`). The installer can prompt to install it automatically when you enable Taildrive functions.
 

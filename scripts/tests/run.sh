@@ -18,6 +18,7 @@ AVAILABLE_SUITES=(
   syntax_lint
   core_install
   core_resolver_security
+  security_boundaries
   extended_macos_states
   extended_update_branches
   extended_taildrive_runtime
@@ -27,12 +28,14 @@ AVAILABLE_SUITES=(
 QUICK_SUITES=(
   core_install
   core_resolver_security
+  security_boundaries
 )
 
 FULL_SUITES=(
   syntax_lint
   core_install
   core_resolver_security
+  security_boundaries
   extended_macos_states
   extended_update_branches
   extended_taildrive_runtime
@@ -72,6 +75,12 @@ load_suite() {
       if ! declare -f run_core_resolver_security_suite >/dev/null 2>&1; then
         # shellcheck source=scripts/tests/suites/core_resolver_security.sh
         source "$SCRIPT_DIR/suites/core_resolver_security.sh"
+      fi
+      ;;
+    security_boundaries)
+      if ! declare -f run_security_boundaries_suite >/dev/null 2>&1; then
+        # shellcheck source=scripts/tests/suites/security_boundaries.sh
+        source "$SCRIPT_DIR/suites/security_boundaries.sh"
       fi
       ;;
     extended_macos_states)

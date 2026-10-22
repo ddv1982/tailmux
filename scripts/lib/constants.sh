@@ -396,7 +396,7 @@ PY
   fi
 
   echo "tailmux: resolved $host -> $target ($mode)" >&2
-  ssh -t -- "$target" "PATH=\"/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$PATH\"; if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else echo \"tmux not found on remote\" >&2; exit 127; fi"
+  ssh -t -- "$target" 'if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else echo "tmux not found on remote" >&2; exit 127; fi'
 }
 EOF
 TAILMUX_FUNC="${TAILMUX_FUNC//__TAILMUX_VERSION__/$TAILMUX_VERSION}"
