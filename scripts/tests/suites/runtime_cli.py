@@ -281,8 +281,9 @@ exit 97
         self.trace.unlink(missing_ok=True)
         p = self.run_client('doctor')
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn('OpenSSH_fixture', p.stdout)
-        self.assertEqual(self.calls(), [[b'version']])
+        self.assertIn('OpenSSH\tSSH client / OS or package owner\t', p.stdout)
+        self.assertIn('vendor patch and OS build evidence required', p.stdout)
+        self.assertEqual(self.calls(), [[b'version', b'--daemon', b'--json']])
         self.assertFalse(self.forbidden.exists())
         for name in ('jq', 'tailscale', 'ssh'):
             (self.bin / name).rename(self.bin / (name + '.away'))
