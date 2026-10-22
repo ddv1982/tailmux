@@ -147,8 +147,8 @@ result=$(jq -cs --arg mode "$mode" --arg selector "$selector" --arg user "$user"
       select(.dns == $selected or (.addresses | index($selected)) != null or
         ($snapshot.suffix != null and ($selected|contains(".") or contains(":") | not) and
           .dns == ($selected + "." + $snapshot.suffix)))] as $matches |
-    if ($matches|length) == 0 then bad("unknown-selector")
-    elif ($matches|length) != 1 then bad("ambiguous-selector") else $matches[0] end as $peer |
+    (if ($matches|length) == 0 then bad("unknown-selector")
+    elif ($matches|length) != 1 then bad("ambiguous-selector") else $matches[0] end) as $peer |
     if any($snapshot.peers[]; .id != $peer.id and
       (.dns == $peer.dns or any(.addresses[]; . as $ip | $peer.addresses | index($ip) != null)))
       then bad("ambiguous-selector") else . end |
