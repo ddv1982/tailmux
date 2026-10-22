@@ -3,7 +3,7 @@
 This policy was reviewed on 2026-10-22.
 `bin/tailmux` remains one self-contained Bash executable with embedded jq filters and a bounded version-policy table.
 Its runtime requires Bash, jq, Tailscale, OpenSSH, and standard OS file utilities.
-Python, gh, PyYAML, and GitHub Actions belong to development or release verification.
+Python and gh are direct-installer and release-verification tools. curl 8.4.0 or later and jq are direct-installer prerequisites. PyYAML and GitHub Actions belong to development and publication.
 Taildrive, davfs2, WebDAV helpers, and local tmux are outside the client dependency set.
 
 ## Inventory records
@@ -110,11 +110,12 @@ The project maintainer owns local test tooling.
 
 | Tool | Reviewed version or pin | Scope and evidence |
 | --- | --- | --- |
-| Python | 3.14.7 observed for local verification. | Test and archive-verification tooling only. This is an observed interpreter version, not a runtime requirement or established multi-version support range. |
+| Python | 3.11 or later for the installer; 3.11 through 3.14 for hashed development wheels. | Installer and verification tooling only. This support floor is separate from live platform acceptance. No runtime Python dependency. |
 | PyYAML | `PyYAML==6.0.3`. | Workflow policy checker only. The release owner must retain approved distribution hashes in development requirements. No runtime YAML parser. |
-| gh | 2.100.0 reviewed flag contract. | Release verification only. `gh attestation verify` must constrain repository, signer workflow, signer digest, source ref, source digest, and hosted runners. CLI help establishes flag availability, not patch status. |
+| gh | 2.103.0 reviewed flag contract. | Installer and release verification. Constrains hostname, repository, signer workflow and digest, source ref and digest, and hosted runners. Explicit bundle mode uses successful JSON certificate publisher IDs. Source contract evidence is not cryptographic acceptance. |
+| curl | 8.4.0 minimum for direct install. | HTTPS-only, bounded downloads with configuration disabled. Earlier versions cannot enforce the byte limit during unknown-length transfers. |
 | actions/checkout | v7.0.1, `3d3c42e5aac5ba805825da76410c181273ba90b1`. | Reviewed full SHA. Node 24. Hosted runner compatibility and `persist-credentials: false` remain release-owner obligations. |
-| actions/attest | v4.2.2, `1e69f48acb82d1966a394da916b4c1698aa569d6`. | Reviewed full SHA. Attests the final archive. |
+| actions/attest | v4.2.2, `1e69f48acb82d1966a394da916b4c1698aa569d6`. | Reviewed full SHA. Attests the final archive and exact committed installer. |
 | actions/upload-artifact | v7.0.2, `cf430e030ddbb5b0abf93d22962f4752f3646cd9`. | Reviewed full SHA. CI evidence transport only. |
 | ShellCheck and actionlint | ShellCheck 0.11.0 locally. actionlint 1.7.12 in parent release review. | Development checks. Syntax checks do not prove branch protection, publisher identity, or a secure deployment. |
 

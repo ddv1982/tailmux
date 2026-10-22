@@ -17,10 +17,12 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: read
     outputs:
       main_sha: ${{ steps.protection.outputs.main_sha }}
       source_sha: ${{ steps.protection.outputs.source_sha }}
       tag: ${{ steps.protection.outputs.tag }}
+      waiver_sha256: ${{ steps.protection.outputs.waiver_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -32,6 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           EXPECTED_SOURCE_SHA: ${{ vars.RELEASE_SOURCE_SHA }}
+          RELEASE_LIVE_ONLY_WAIVER: ${{ vars.RELEASE_LIVE_ONLY_WAIVER }}
         run: python3 scripts/release/preflight.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA"
 
   publish:
@@ -44,12 +47,15 @@ jobs:
       attestations: write
       id-token: write
       actions: read
+      checks: read
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.preflight.outputs.tag }}
       EXPECTED_SOURCE_SHA: ${{ vars.RELEASE_SOURCE_SHA }}
       PREFLIGHT_SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
       REVIEWED_MAIN_SHA: ${{ needs.preflight.outputs.main_sha }}
+      RELEASE_LIVE_ONLY_WAIVER: ${{ vars.RELEASE_LIVE_ONLY_WAIVER }}
+      REVIEWED_WAIVER_SHA256: ${{ needs.preflight.outputs.waiver_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -58,29 +64,40 @@ jobs:
       - name: Repeat protection checks after approval
         run: |
           test "$EXPECTED_SOURCE_SHA" = "$PREFLIGHT_SOURCE_SHA"
-          python3 scripts/release/preflight.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" --main-sha "$REVIEWED_MAIN_SHA"
-      - name: Require operator-reviewed acceptance evidence
+          python3 scripts/release/preflight.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" --main-sha "$REVIEWED_MAIN_SHA" --waiver-sha256 "$REVIEWED_WAIVER_SHA256"
+      - name: Require acceptance evidence or exact live-only exception
         env:
           ACCEPTANCE_SOURCE_SHA: ${{ vars.ACCEPTANCE_SOURCE_SHA }}
           ACCEPTANCE_ARTIFACT_ID: ${{ vars.ACCEPTANCE_ARTIFACT_ID }}
           ACCEPTANCE_ARCHIVE_SHA256: ${{ vars.ACCEPTANCE_ARCHIVE_SHA256 }}
           ACCEPTANCE_REQUEST_SHA256: ${{ vars.ACCEPTANCE_REQUEST_SHA256 }}
-        run: python3 scripts/acceptance/release_gate.py --expected-sha "$EXPECTED_SOURCE_SHA" --expected-merge-base "$EXPECTED_SOURCE_SHA"
+        run: python3 scripts/release/acceptance.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" --waiver-sha256 "$REVIEWED_WAIVER_SHA256"
       - name: Build exact committed package
         run: |
           mkdir -m 700 dist
           python3 scripts/release/package.py build --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" --output "dist/tailmux-${TAG}.tar.gz"
+          python3 scripts/release/package.py build-installer --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" --output "dist/tailmux-${TAG}-installer.py"
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        id: attestation
         with:
-          subject-path: dist/tailmux-${{ needs.preflight.outputs.tag }}.tar.gz
+          subject-path: |
+            dist/tailmux-${{ needs.preflight.outputs.tag }}.tar.gz
+            dist/tailmux-${{ needs.preflight.outputs.tag }}-installer.py
           push-to-registry: false
           create-storage-record: false
+      - name: Preserve standard attestation bundle
+        env:
+          BUNDLE_PATH: ${{ steps.attestation.outputs.bundle-path }}
+        run: cp -- "$BUNDLE_PATH" "dist/tailmux-${TAG}.sigstore.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: tailmux-${{ needs.preflight.outputs.tag }}
-          path: dist/tailmux-${{ needs.preflight.outputs.tag }}.tar.gz
+          path: |
+            dist/tailmux-${{ needs.preflight.outputs.tag }}.tar.gz
+            dist/tailmux-${{ needs.preflight.outputs.tag }}-installer.py
+            dist/tailmux-${{ needs.preflight.outputs.tag }}.sigstore.json
           if-no-files-found: error
           retention-days: 7
-      - name: Publish attested archive
+      - name: Publish authenticated direct installer and package
         run: |
-          gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" --repo ddv1982/tailmux --verify-tag --target "$EXPECTED_SOURCE_SHA" --title "$TAG" --notes "Portable package. Verify publisher and expected source before unpacking. See docs/releases.md."
+          gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" "dist/tailmux-${TAG}-installer.py" "dist/tailmux-${TAG}.sigstore.json" --repo ddv1982/tailmux --verify-tag --prerelease=false --latest --target "$EXPECTED_SOURCE_SHA" --title "$TAG" --notes-file docs/release-notes-0.2.0.md

@@ -19,7 +19,7 @@ spec = importlib.util.spec_from_file_location("release_package", SCRIPT)
 pkg = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = pkg
 spec.loader.exec_module(pkg)
-REQUEST = pkg.ReleaseRequest("v0.2.0-dev", "a" * 40)
+REQUEST = pkg.ReleaseRequest("v0.2.0", "a" * 40)
 FILES = {name: (ROOT / name).read_bytes() if (ROOT / name).is_file() else b"release instructions\n"
          for name in pkg.PAYLOAD}
 
@@ -32,7 +32,8 @@ class ReleaseTests(unittest.TestCase):
         self.fake = self.root / "gh"
         self.fake.write_text("#!/usr/bin/env python3\nimport json, os, sys\n"
                              "open(os.environ['GH_LOG'], 'w').write(json.dumps(sys.argv[1:]))\n"
-                             "sys.exit(int(os.environ.get('GH_RESULT', '0')))\n")
+                             "sys.exit(int(os.environ.get('GH_RESULT', '0'))) if os.environ.get('GH_RESULT', '0') != '0' else None\n"
+                             "print(json.dumps([{'verificationResult': {'signature': {'certificate': {'sourceRepositoryIdentifier': '1144643418', 'sourceRepositoryOwnerIdentifier': '240215896'}}}}]))\n")
         self.fake.chmod(0o700)
         self.archive = self.root / "input.tar.gz"
         self.output = self.root / "output"
@@ -77,14 +78,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotEqual(first.stdout, second.stdout)
         args = json.loads((self.root / 'gh.json').read_text())
         self.assertEqual(args[:2], ['attestation', 'verify'])
-        self.assertEqual(args[3:], ['--repo', 'ddv1982/tailmux', '--signer-workflow',
+        self.assertEqual(args[3:], ['--hostname', 'github.com', '--repo', 'ddv1982/tailmux', '--signer-workflow',
                                    'ddv1982/tailmux/.github/workflows/release.yml',
-                                   '--signer-digest', 'a' * 40, '--source-ref', 'refs/tags/v0.2.0-dev',
-                                   '--source-digest', 'a' * 40, '--deny-self-hosted-runners'])
+                                   '--signer-digest', 'a' * 40, '--source-ref', 'refs/tags/v0.2.0',
+                                   '--source-digest', 'a' * 40, '--deny-self-hosted-runners', '--format', 'json'])
         help_result = subprocess.run(['bash', str(stage / 'bin/tailmux'), '--help'], capture_output=True)
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         version = subprocess.run(['bash', str(stage / 'bin/tailmux'), '--version'], capture_output=True)
-        self.assertEqual(version.stdout, b'tailmux 0.2.0-dev\n')
+        self.assertEqual(version.stdout, b'tailmux 0.2.0\n')
 
     def test_verifier_failure_precedes_even_gzip_parsing(self):
         result = self.verify(b'not even gzip', result='17')
@@ -204,6 +205,10 @@ class ReleaseTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes((ROOT / name).read_bytes())
             path.chmod(0o755 if name == 'bin/tailmux' else 0o644)
+        installer_source = fixture / 'scripts/release/package.py'
+        installer_source.parent.mkdir(parents=True, exist_ok=True)
+        installer_bytes = SCRIPT.read_bytes()
+        installer_source.write_bytes(installer_bytes)
         def git(*args, **kwargs):
             return subprocess.run(['git', '-C', str(fixture), *args], check=True,
                                   capture_output=True, **kwargs).stdout.strip().decode()
@@ -215,6 +220,15 @@ class ReleaseTests(unittest.TestCase):
         git('update-ref', 'HEAD', source)
         git('update-ref', f'refs/tags/{REQUEST.tag}', source)
         (fixture / 'bin/tailmux').write_text('Uncommitted input must never ship\n')
+        installer_source.write_text('Uncommitted installer must never ship\n')
+        exported = self.root / 'installer.py'
+        export = [sys.executable, str(SCRIPT), 'build-installer', '--root', str(fixture),
+                  '--tag', REQUEST.tag, '--source-sha', source, '--output', str(exported)]
+        result = subprocess.run(export, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(exported.read_bytes(), installer_bytes)
+        self.assertNotEqual(subprocess.run(export, capture_output=True).returncode, 0)
+        self.assertEqual(exported.read_bytes(), installer_bytes)
         built = []
         for name in ('first.tar.gz', 'second.tar.gz'):
             destination = self.root / name

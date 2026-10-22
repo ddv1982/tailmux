@@ -18,17 +18,22 @@ HOSTED = {"ubuntu-24.04", "macos-15"}
 ACTIONLINT_SHA256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
 PREFLIGHT = 'python3 scripts/release/preflight.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA"'
 RECHECK = ('test "$EXPECTED_SOURCE_SHA" = "$PREFLIGHT_SOURCE_SHA"\n' + PREFLIGHT
-           + ' --main-sha "$REVIEWED_MAIN_SHA"')
-ACCEPTANCE_GATE = ('python3 scripts/acceptance/release_gate.py --expected-sha "$EXPECTED_SOURCE_SHA" '
-                   '--expected-merge-base "$EXPECTED_SOURCE_SHA"')
+           + ' --main-sha "$REVIEWED_MAIN_SHA" --waiver-sha256 "$REVIEWED_WAIVER_SHA256"')
+ACCEPTANCE_GATE = ('python3 scripts/release/acceptance.py --tag "$TAG" --source-sha "$EXPECTED_SOURCE_SHA" '
+                   '--waiver-sha256 "$REVIEWED_WAIVER_SHA256"')
 ACCEPTANCE_ENV = {key: '${{ vars.' + key + ' }}' for key in (
     "ACCEPTANCE_SOURCE_SHA", "ACCEPTANCE_ARTIFACT_ID", "ACCEPTANCE_ARCHIVE_SHA256", "ACCEPTANCE_REQUEST_SHA256")}
 
 BUILD = ('mkdir -m 700 dist\npython3 scripts/release/package.py build --tag "$TAG" '
-         '--source-sha "$EXPECTED_SOURCE_SHA" --output "dist/tailmux-${TAG}.tar.gz"')
-PUBLISH = ('gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" --repo ddv1982/tailmux '
-           '--verify-tag --target "$EXPECTED_SOURCE_SHA" --title "$TAG" --notes '
-           '"Portable package. Verify publisher and expected source before unpacking. See docs/releases.md."')
+         '--source-sha "$EXPECTED_SOURCE_SHA" --output "dist/tailmux-${TAG}.tar.gz"\n'
+         'python3 scripts/release/package.py build-installer --tag "$TAG" '
+         '--source-sha "$EXPECTED_SOURCE_SHA" --output "dist/tailmux-${TAG}-installer.py"')
+PUBLISH = ('gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" "dist/tailmux-${TAG}-installer.py" '
+           '"dist/tailmux-${TAG}.sigstore.json" --repo ddv1982/tailmux '
+           '--verify-tag --prerelease=false --latest --target "$EXPECTED_SOURCE_SHA" --title "$TAG" '
+           '--notes-file docs/release-notes-0.2.0.md')
+BUNDLE_COPY = 'cp -- "$BUNDLE_PATH" "dist/tailmux-${TAG}.sigstore.json"'
+
 
 
 class WorkflowLoader(yaml.SafeLoader):
@@ -165,21 +170,23 @@ def validate_release(document):
     jobs = document["jobs"]
     require(set(jobs) == {"preflight", "publish"}, "Release job boundary changed")
     preflight, publish = jobs["preflight"], jobs["publish"]
-    require(preflight.get("permissions") == {"contents": "read", "actions": "read"}
+    require(preflight.get("permissions") == {"contents": "read", "actions": "read", "checks": "read"}
             and "environment" not in preflight and "needs" not in preflight and "env" not in preflight,
             "Preflight must be unprivileged and precede any environment")
     require(preflight.get("outputs") == {
-        key: '${{ steps.protection.outputs.' + key + ' }}' for key in ("main_sha", "source_sha", "tag")},
+        key: '${{ steps.protection.outputs.' + key + ' }}' for key in ("main_sha", "source_sha", "tag", "waiver_sha256")},
         "Preflight outputs must carry independently checked identities")
     require(publish.get("needs") == "preflight" and publish.get("environment") == "release",
             "Publisher requires successful preflight and release approval")
     require(publish.get("permissions") == {"contents": "write", "attestations": "write", "id-token": "write",
-                                          "actions": "read"}, "Publisher permissions exceed reviewed scope")
+                                          "actions": "read", "checks": "read"}, "Publisher permissions exceed reviewed scope")
     require(publish.get("env") == {
         "GH_TOKEN": "${{ github.token }}", "TAG": "${{ needs.preflight.outputs.tag }}",
         "EXPECTED_SOURCE_SHA": "${{ vars.RELEASE_SOURCE_SHA }}",
         "PREFLIGHT_SOURCE_SHA": "${{ needs.preflight.outputs.source_sha }}",
-        "REVIEWED_MAIN_SHA": "${{ needs.preflight.outputs.main_sha }}"}, "Publisher expectations changed")
+        "REVIEWED_MAIN_SHA": "${{ needs.preflight.outputs.main_sha }}",
+        "RELEASE_LIVE_ONLY_WAIVER": "${{ vars.RELEASE_LIVE_ONLY_WAIVER }}",
+        "REVIEWED_WAIVER_SHA256": "${{ needs.preflight.outputs.waiver_sha256 }}"}, "Publisher expectations changed")
     for job in jobs.values():
         require(job["runs-on"] == "ubuntu-24.04" and "defaults" not in job, "Publisher must use reviewed hosted runner")
         for step in job["steps"]:
@@ -191,23 +198,32 @@ def validate_release(document):
     require(len(before) == 2 and "env" not in before[0] and before[1].get("id") == "protection"
             and before[1].get("run", "").strip() == PREFLIGHT and before[1].get("env") == {
                 "GH_TOKEN": "${{ github.token }}", "TAG": "${{ github.ref_name }}",
-                "EXPECTED_SOURCE_SHA": "${{ vars.RELEASE_SOURCE_SHA }}"}, "Unprivileged preflight changed")
+                "EXPECTED_SOURCE_SHA": "${{ vars.RELEASE_SOURCE_SHA }}",
+                "RELEASE_LIVE_ONLY_WAIVER": "${{ vars.RELEASE_LIVE_ONLY_WAIVER }}"}, "Unprivileged preflight changed")
     steps = publish["steps"]
-    require(len(steps) == 7, "Publisher step sequence changed")
-    for index, command in ((1, RECHECK), (3, BUILD), (6, PUBLISH)):
+    require(len(steps) == 8, "Publisher step sequence changed")
+    for index, command in ((1, RECHECK), (3, BUILD), (7, PUBLISH)):
         require(steps[index].get("run", "").strip() == command and "env" not in steps[index],
                 "Required repeat-check, acceptance refusal, build, attest, publish order changed")
     require(steps[2].get("run", "").strip() == ACCEPTANCE_GATE and steps[2].get("env") == ACCEPTANCE_ENV,
             "Exact protected acceptance gate must precede build")
     archive = "dist/tailmux-${{ needs.preflight.outputs.tag }}.tar.gz"
-    require(steps[4].get("uses") == "actions/attest@" + PINS["actions/attest"] and steps[4].get("with") == {
-        "subject-path": archive, "push-to-registry": False, "create-storage-record": False},
-        "Attestation must cover the exact final archive with standard provenance")
-    require(steps[5].get("uses") == "actions/upload-artifact@" + PINS["actions/upload-artifact"]
-            and steps[5].get("with") == {"name": "tailmux-${{ needs.preflight.outputs.tag }}", "path": archive,
+    installer = "dist/tailmux-${{ needs.preflight.outputs.tag }}-installer.py"
+    bundle = "dist/tailmux-${{ needs.preflight.outputs.tag }}.sigstore.json"
+    require(steps[4].get("uses") == "actions/attest@" + PINS["actions/attest"]
+            and steps[4].get("id") == "attestation" and steps[4].get("with") == {
+        "subject-path": archive + "\n" + installer + "\n",
+        "push-to-registry": False, "create-storage-record": False},
+        "Attestation must cover exactly the final archive and committed installer")
+    require(steps[5].get("run", "").strip() == BUNDLE_COPY and steps[5].get("env") == {
+        "BUNDLE_PATH": "${{ steps.attestation.outputs.bundle-path }}"},
+        "Only the standard attestation action bundle may be published")
+    require(steps[6].get("uses") == "actions/upload-artifact@" + PINS["actions/upload-artifact"]
+            and steps[6].get("with") == {"name": "tailmux-${{ needs.preflight.outputs.tag }}",
+                                        "path": archive + "\n" + installer + "\n" + bundle + "\n",
                                         "if-no-files-found": "error", "retention-days": 7},
-            "Upload must preserve the attested archive")
-    require(all("env" not in steps[i] for i in (0, 4, 5)), "Action environment override forbidden")
+            "Upload must preserve the exact installer, archive, and bundle")
+    require(all("env" not in steps[i] for i in (0, 4, 6)), "Action environment override forbidden")
 
 
 def validate_acceptance(document):

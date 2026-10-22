@@ -5,7 +5,13 @@ It attaches to any existing session, or creates one when attachment fails.
 
 ## Install the local client
 
-Use a reviewed local checkout. For future release packages, follow [publisher verification](docs/releases.md) before unpacking or executing content:
+Release assets support direct installation on macOS and Linux without a checkout.
+The reviewed install block pins the exact release source and authenticates the installer before execution.
+It needs trusted Python 3.11 or later, gh 2.103.0 or later, jq, and curl 8.4.0 or later.
+See [direct installation and publisher verification](docs/releases.md).
+The literal block is generated after the final release source exists and distributed through reviewed release instructions.
+
+This release-source checkout remains installable directly:
 
 
 ```bash
@@ -13,7 +19,7 @@ bash setup.sh install
 "$HOME/.local/bin/tailmux" --version
 ```
 
-The client version is `0.2.0-dev`.
+The client version is `0.2.0`.
 Setup installs one executable and a small ownership receipt under `~/.local/bin`.
 For another destination, pass an absolute binary directory:
 

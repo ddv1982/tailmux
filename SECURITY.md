@@ -25,7 +25,7 @@ An upstream dependency issue can still affect Tailmux users, and maintainers hel
 
 There is no previous authenticated operational release available for rollback yet.
 Fake-command tests and release-verifier fixtures establish local behavior only.
-Real protected publication, cryptographic consumer acceptance, and platform SSH scenarios remain release acceptance gates.
+Real protected publication and cryptographic consumer acceptance remain release gates. Platform SSH scenarios remain unverified. The explicit exact-source v0.2.0 live-only exception is documented in [release policy](docs/releases.md). It waives no authentication, source, CI, or code-review requirement.
 This policy does not declare those gates passed.
 
 ## Response targets
