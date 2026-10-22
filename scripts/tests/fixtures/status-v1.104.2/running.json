@@ -1,0 +1,19 @@
+{
+  "Version": "1.104.2",
+  "BackendState": "Running",
+  "CurrentTailnet": {"MagicDNSSuffix": "example.ts.net", "MagicDNSEnabled": false},
+  "Self": {"HostName": "not-selection-evidence"},
+  "Peer": {
+    "nodekey:fixture-a": {
+      "ID": "nFixtureWork", "DNSName": "work.example.ts.net.", "HostName": "untrusted-reported-name",
+      "TailscaleIPs": ["fd7a:115c:a1e0::2", "100.64.0.20"],
+      "sshHostKeys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakePublicKeyOnlyForStructuralFixture00"],
+      "InNetworkMap": true, "Online": false, "Expired": false
+    },
+    "nodekey:fixture-b": {
+      "ID": "nFixtureShared", "DNSName": "shared.other.ts.net.", "HostName": "work",
+      "TailscaleIPs": ["fd7a:115c:a1e0::3"],
+      "sshHostKeys": ["ssh-ed25519 AAAA"], "InNetworkMap": true, "Online": true
+    }
+  }
+}

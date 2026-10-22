@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -uo pipefail
+export LC_ALL=C
+readonly TAILMUX_VERSION=0.2.0-dev
+
+usage() {
+  printf '%s\n' "tailmux $TAILMUX_VERSION" \
+    'Usage: tailmux [user@]selector' '       tailmux doctor [[user@]selector]' \
+    '       tailmux --help | --version' \
+    'Selectors are known canonical peer names, advertised addresses, or declarative host aliases.' \
+    'Only tailscale ssh is supported. No extra options or remote commands are accepted.'
+}
+fail() { printf 'tailmux: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+mode=connect
+selector=''
+user=''
+case "${1:-}" in
+  --help|-h) [[ $# == 1 ]] || fail 'invalid-request: help takes no arguments' 2; usage; exit 0 ;;
+  --version|-V) [[ $# == 1 ]] || fail 'invalid-request: version takes no arguments' 2; printf 'tailmux %s\n' "$TAILMUX_VERSION"; exit 0 ;;
+  doctor) mode=doctor; shift ;;
+esac
+if [[ "$mode" == connect && $# != 1 || "$mode" == doctor && $# -gt 1 ]]; then
+  usage >&2
+  fail 'invalid-request: exactly one selector is required for connect' 2
+fi
+if [[ $# == 1 ]]; then
+  selector=$1
+  if [[ "$selector" == *@* ]]; then
+    user=${selector%%@*}
+    selector=${selector#*@}
+    [[ "$user" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}\$?$ ]] || fail 'invalid-request: invalid remote user' 2
+  fi
+  [[ -n "$selector" && "$selector" != -* && "$selector" != *[!A-Za-z0-9.:_-]* ]] || fail 'invalid-request: invalid selector' 2
+fi
+
+if [[ "$mode" == doctor && -z "$selector" ]]; then
+  printf 'tailmux %s\nBash %s\n' "$TAILMUX_VERSION" "$BASH_VERSION"
+  for dependency in jq tailscale ssh; do
+    if ! command -v "$dependency" >/dev/null 2>&1; then
+      printf '%s unavailable\n' "$dependency"
+    else
+      case "$dependency" in
+        jq) jq --version ;;
+        tailscale) tailscale version ;;
+        ssh) ssh -V ;;
+      esac
+    fi
+  done
+  exit 0
+fi
+for dependency in jq tailscale ssh mktemp head wc tr rm rmdir; do
+  command -v "$dependency" >/dev/null 2>&1 || fail "missing-dependency: $dependency"
+done
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/tailmux.XXXXXXXX") || fail 'local-io: cannot create private snapshot directory'
+trap 'rm -f "$work/status" "$work/aliases"; rmdir "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+hosts=${TAILMUX_HOSTS_FILE-"${HOME:-}/.config/tailmux/hosts"}
+if [[ -n ${TAILMUX_HOSTS_FILE+x} && ! -f "$hosts" ]]; then
+  fail 'invalid-aliases: explicitly selected hosts file is missing or not regular'
+fi
+if [[ -e "$hosts" ]]; then
+  [[ -f "$hosts" && -r "$hosts" ]] || fail 'invalid-aliases: hosts file is not readable regular data'
+  head -c 65537 < "$hosts" > "$work/aliases" || fail 'invalid-aliases: cannot read hosts file'
+else
+  : > "$work/aliases"
+fi
+[[ $(wc -c < "$work/aliases") -le 65536 ]] || fail 'invalid-aliases: hosts file exceeds 64 KiB'
+[[ $(wc -c < "$work/aliases") == $(tr -d '\000' < "$work/aliases" | wc -c) ]] || fail 'invalid-aliases: NUL byte in hosts file'
+
+tailscale status --json 2>/dev/null | head -c 8388609 > "$work/status"
+pipeline_status=("${PIPESTATUS[@]}")
+[[ $(wc -c < "$work/status") -le 8388608 ]] || fail 'invalid-schema: status exceeds 8 MiB'
+[[ ${pipeline_status[0]} == 0 && ${pipeline_status[1]} == 0 ]] || fail 'daemon-unavailable: tailscale status failed'
+[[ $(wc -c < "$work/status") == $(tr -d '\000' < "$work/status" | wc -c) ]] || fail 'invalid-schema: NUL byte in status'
+
+result=$(jq -cs --arg mode "$mode" --arg selector "$selector" --arg user "$user" --rawfile aliases "$work/aliases" '
+  def bad($code): error($code);
+  def dns:
+    if type != "string" then false else length <= 254 and
+    (ascii_downcase | rtrimstr(".") | split(".") |
+      length > 0 and all(.[]; length <= 63 and test("\\A[a-z0-9]([a-z0-9-]*[a-z0-9])?\\z"))) end;
+  def canonical: ascii_downcase | rtrimstr(".");
+  def ipv4:
+    if type != "string" then false else (split(".") | length == 4 and
+      all(.[]; test("\\A(0|[1-9][0-9]{0,2})\\z") and (try (tonumber <= 255) catch false))) end;
+  def ipv6:
+    if type != "string" then false else test("\\A[0-9a-fA-F:]+\\z") and contains(":") and
+    (split("::") | if length == 1 then
+      (.[0] | split(":") | length == 8 and all(.[]; test("\\A[0-9a-fA-F]{1,4}\\z")))
+    elif length == 2 then
+      ([.[] | select(length > 0) | split(":")[]] |
+        length < 8 and all(.[]; test("\\A[0-9a-fA-F]{1,4}\\z")))
+    else false end) end;
+  def address: ipv4 or ipv6;
+  def fqdn: dns and (canonical | contains(".")) and (ipv4 | not);
+  def key:
+    type == "string" and length <= 16384 and
+    test("\\A(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com) [A-Za-z0-9+/]{4,}={0,2}( [ -~]*)?\\z") and
+    (split(" ")[1] | length % 4 == 0);
+  def aliases:
+    $aliases | split("\n") | map(gsub("\\A[ \\t]+|[ \\t\\r]+\\z"; "")) |
+    map(select(length > 0 and (startswith("#") | not)) | [scan("[^ \\t]+")]) |
+    if length > 256 or any(.[]; length != 2) then bad("invalid-aliases") else . end |
+    map(if (.[0] | dns and (canonical | contains(".") | not)) and (.[1] | fqdn or address)
+      then {name:(.[0]|canonical), target:(.[1]|canonical)} else bad("invalid-aliases") end) |
+    if (map(.name)|unique|length) != length then bad("invalid-aliases") else . end;
+  def peer:
+    if type != "object" or (.ID | type != "string") or (.ID | test("\\A[A-Za-z0-9_-]{1,128}\\z") | not) or
+      (.DNSName | type != "string") or (.DNSName != "" and (.DNSName | fqdn | not)) or
+      (.TailscaleIPs | type != "array") or (.TailscaleIPs | length > 64) or
+      (.TailscaleIPs | all(.[]; address) | not) or (.InNetworkMap | type != "boolean") or
+      (has("Online") and .Online != null and (.Online | type != "boolean")) or
+      (has("Expired") and (.Expired | type != "boolean")) or
+      (has("sshHostKeys") and .sshHostKeys != null and
+        ((.sshHostKeys | type != "array") or (.sshHostKeys | length > 64) or (.sshHostKeys | all(.[]; key) | not)))
+    then bad("invalid-schema") else
+      {id:.ID, dns:(.DNSName|canonical), addresses:(.TailscaleIPs | map(ascii_downcase)),
+       sshHostKeys:(.sshHostKeys // []), inNetworkMap:.InNetworkMap,
+       online:(if has("Online") then .Online else null end),
+       expired:(if has("Expired") then .Expired else false end)}
+    end;
+  try (
+    if length != 1 then bad("invalid-schema") else .[0] end |
+    if type != "object" or (.BackendState | type != "string") then bad("invalid-schema") else . end |
+    if .BackendState == "NeedsLogin" then bad("logged-out")
+    elif .BackendState == "Stopped" then bad("stopped/not-ready")
+    elif (.BackendState as $state | ["NoState", "NeedsMachineAuth", "Starting", "InUseOtherUser"] | index($state)) != null then bad("stopped/not-ready")
+    elif .BackendState != "Running" then bad("invalid-schema") else . end |
+    if (has("Peer") | not) or (.Peer != null and (.Peer | type != "object")) or
+      (has("CurrentTailnet") and .CurrentTailnet != null and (.CurrentTailnet | type != "object")) or
+      (.CurrentTailnet != null and (.CurrentTailnet|has("MagicDNSSuffix")) and
+       (.CurrentTailnet.MagicDNSSuffix | type != "string")) then bad("invalid-schema") else . end |
+    {backend:.BackendState,
+     suffix:(if (.CurrentTailnet.MagicDNSSuffix | fqdn) then (.CurrentTailnet.MagicDNSSuffix|canonical) else null end),
+     peers:((.Peer // {}) | if length > 4096 then bad("invalid-schema") else [.[]|peer] end)} as $snapshot |
+    if ($snapshot.peers|map(.id)|unique|length) != ($snapshot.peers|length) then bad("invalid-schema") else . end |
+    {mode:$mode, selector:($selector|canonical), user:(if $user == "" then null else $user end),
+     transport:"tailscale-ssh", session:"attach-any"} as $request |
+    if ($request.selector | dns or address | not) then bad("invalid-request") else . end |
+    aliases as $aliases |
+    ([$aliases[]|select(.name == $request.selector)] |
+      if length == 1 then .[0].target else $request.selector end) as $selected |
+    [$snapshot.peers[] | select(.inNetworkMap and .dns != "" and (.addresses|length > 0)) |
+      select(.dns == $selected or (.addresses | index($selected)) != null or
+        ($snapshot.suffix != null and ($selected|contains(".") or contains(":") | not) and
+          .dns == ($selected + "." + $snapshot.suffix)))] as $matches |
+    if ($matches|length) == 0 then bad("unknown-selector")
+    elif ($matches|length) != 1 then bad("ambiguous-selector") else $matches[0] end as $peer |
+    if any($snapshot.peers[]; .id != $peer.id and
+      (.dns == $peer.dns or any(.addresses[]; . as $ip | $peer.addresses | index($ip) != null)))
+      then bad("ambiguous-selector") else . end |
+    if $peer.expired then bad("peer-key-expired")
+    elif ($peer.sshHostKeys|length) == 0 then bad("missing-advertised-host-keys") else . end |
+    {ok:true, target:{peerId:$peer.id, canonicalDNS:$peer.dns,
+      address:(if ($peer.addresses|index($selected)) != null then $selected
+        else ($peer.addresses|sort_by([if contains(":") then 1 else 0 end, .])|.[0]) end),
+      user:$request.user, online:$peer.online, expired:$peer.expired,
+      transport:$request.transport, session:$request.session}}
+  ) catch {ok:false, error:(if . == "invalid-aliases" or . == "invalid-request" or
+    . == "logged-out" or . == "stopped/not-ready" or . == "unknown-selector" or
+    . == "ambiguous-selector" or . == "peer-key-expired" or . == "missing-advertised-host-keys"
+    then . else "invalid-schema" end)}
+' "$work/status" 2>/dev/null) || fail 'invalid-schema: status is not exactly one valid JSON document'
+[[ $(printf '%s' "$result" | jq -r '.ok') == true ]] || fail "$(printf '%s' "$result" | jq -r '.error')"
+if [[ "$mode" == doctor ]]; then
+  printf '%s\n' "$result" | jq .target
+  exit 0
+fi
+destination=$(printf '%s' "$result" | jq -r '.target | (if .user == null then "" else .user + "@" end) + .address') || exit 1
+if ! rm -f "$work/status" "$work/aliases" || ! rmdir "$work"; then fail 'local-io: snapshot cleanup failed'; fi
+trap - EXIT INT TERM
+readonly remote_program='if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else printf "%s\n" "tmux not found on remote" >&2; exit 127; fi'
+exec tailscale ssh "$destination" -t "$remote_program"

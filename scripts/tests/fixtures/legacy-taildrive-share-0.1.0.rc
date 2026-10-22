@@ -1,0 +1,111 @@
+# >>> tailmux managed block (taildrive) >>>
+# taildrive - file sharing over Tailscale
+_taildrive_get_os_name() {
+  uname -s
+}
+_taildrive_require_cmd() {
+  local cmd="${1:?missing command name}"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: Required command '$cmd' not found in PATH" >&2
+    return 1
+  fi
+}
+_taildrive_require_drive_subcommand() {
+  _taildrive_require_cmd tailscale || return 1
+  if tailscale drive --help >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$(_taildrive_get_os_name)" == "Darwin" ]]; then
+    echo "Error: Your current macOS 'tailscale' CLI does not expose the 'drive' subcommand." >&2
+    echo "On macOS, configure shares in the Tailscale app: Settings -> File Sharing." >&2
+    echo "Taildrive docs: https://tailscale.com/kb/1369/taildrive" >&2
+  else
+    echo "Error: Your current 'tailscale' CLI does not expose the 'drive' subcommand." >&2
+    echo "Update Tailscale, then retry." >&2
+  fi
+  return 1
+}
+_taildrive_status_json() {
+  _taildrive_require_cmd tailscale || return 1
+  tailscale status --json 2>/dev/null
+}
+_taildrive_json_field() {
+  local json="${1:-}"
+  local path="${2:?missing json path}"
+  local value=""
+
+  if [[ -z "$json" ]]; then
+    return 1
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    value="$(printf '%s\n' "$json" | jq -r --arg path "$path" 'getpath($path | split(".")) // empty' 2>/dev/null || true)"
+  elif command -v python3 >/dev/null 2>&1; then
+    value="$(printf '%s\n' "$json" | python3 -c 'import json,sys; value=json.load(sys.stdin); \
+for key in sys.argv[1].split("."): \
+    value = value.get(key, "") if isinstance(value, dict) else ""; \
+    if value in (None, ""): \
+        value = ""; \
+        break; \
+print("" if value is None else value)' "$path" 2>/dev/null || true)"
+  else
+    case "$path" in
+      Self.HostName)
+        value="$(printf '%s\n' "$json" | sed -n 's/.*"HostName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+        ;;
+      MagicDNSSuffix)
+        value="$(printf '%s\n' "$json" | sed -n 's/.*"MagicDNSSuffix"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+        ;;
+    esac
+  fi
+
+  printf '%s\n' "$value"
+  [[ -n "$value" ]]
+}
+_taildrive_self_hostname() {
+  local json
+  if ! json="$(_taildrive_status_json)"; then
+    return 1
+  fi
+  _taildrive_json_field "$json" "Self.HostName"
+}
+_taildrive_magicdns_suffix() {
+  local json
+  if ! json="$(_taildrive_status_json)"; then
+    return 1
+  fi
+  _taildrive_json_field "$json" "MagicDNSSuffix"
+}
+tailshare() {
+  local name="${1:?Usage: tailshare <name> [path]}"
+  local path="${2:-.}"
+  _taildrive_require_drive_subcommand || return 1
+  if ! path="$(cd "$path" && pwd)"; then
+    echo "Error: Path '$path' does not exist" >&2
+    return 1
+  fi
+  if ! tailscale drive share "$name" "$path"; then
+    return 1
+  fi
+  echo "Shared '$name' -> $path"
+  local hostname
+  hostname="$(_taildrive_self_hostname || true)"
+  if [[ -n "$hostname" ]]; then
+    echo "Others can mount with: tailmount $hostname $name"
+  else
+    echo "Tip: mount from another machine with: tailmount <host> $name"
+  fi
+}
+tailunshare() {
+  local name="${1:?Usage: tailunshare <name>}"
+  _taildrive_require_drive_subcommand || return 1
+  if ! tailscale drive unshare "$name"; then
+    return 1
+  fi
+  echo "Unshared '$name'"
+}
+tailshare-ls() {
+  _taildrive_require_drive_subcommand || return 1
+  tailscale drive list
+}
+# <<< tailmux managed block (taildrive) <<<

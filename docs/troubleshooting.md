@@ -1,49 +1,71 @@
-# Troubleshoot setup and connections
+# Troubleshoot the client
 
-## Resolve a setup refusal
+Run the printed absolute executable path if an existing shell alias or function shadows `tailmux`.
+Setup preserves unmanaged shell code and does not modify your current shell.
 
-Run `bash setup.sh --help` from a reviewed local checkout. Help and version need no modules, networking, or running Tailscale daemon.
-Remote process-substitution setup is disabled. Setup never downloads replacement modules.
-If a module is missing, restore the complete reviewed checkout before retrying.
+```bash
+"$HOME/.local/bin/tailmux" --version
+"$HOME/.local/bin/tailmux" doctor
+"$HOME/.local/bin/tailmux" doctor work.example.ts.net
+```
 
-An unknown or modified managed block is not proof of Tailmux ownership. Back up the RC and inspect its complete contents before changing it manually.
-Resolve unmanaged `tailmux` functions or aliases yourself. Setup never overwrites them.
-For symlinked dotfiles, remove or migrate the reviewed block through the tool that owns those files. Setup refuses symlinked RC files and ancestors.
+Doctor with a selector reports the selected identity and address without connecting.
+It does not read complete preferences, print environment variables, renew keys, or change configuration.
 
-RC files require current-user ownership, a single hard link, and no group or other write permission. Their direct parent requires current-user ownership and no group or other write permission.
-Every ancestor must belong to the current user or root. Group or other writable ancestors require the sticky bit.
-Setup refuses RC-file ACLs. On macOS, a directory can have the single default ACL entry `0: group:everyone deny delete`.
-Setup preserves that deny-only directory ACL. It refuses all other directory ACL entries, including mutating grants on higher ancestors. Use operator-managed migration for refused cases.
-Do not strip metadata to force installation. On macOS setup preserves and verifies xattrs, including automatic provenance. Unsupported metadata or failed preservation must remain a refusal.
+| Failure | Action |
+| --- | --- |
+| `missing-dependency` | Install the named tool through its existing package owner. |
+| `daemon-unavailable` | Inspect the local Tailscale daemon through its operator-owned tools. No fallback connection was started. |
+| `logged-out` | Ask the machine owner to restore the intended identity. Tailmux never logs in or out for you. |
+| `stopped/not-ready` | Resolve the daemon's readiness state before retrying. |
+| `invalid-schema` | Use a reviewed compatible status schema. Do not replace jq with a text parser. |
+| `invalid-aliases` | Use exactly two fields per entry and canonical full-name or advertised-address targets. |
+| `unknown-selector` | Copy a canonical name or address from your known peer inventory. Shared peers need a full name or explicit canonical alias. |
+| `ambiguous-selector` | Resolve the duplicate identity name or address in the coordination inventory. Tailmux never chooses the first record. |
+| `missing-advertised-host-keys` | Have the destination owner verify Tailscale SSH enablement and policy. Ordinary sshd reachability does not establish wrapper readiness. |
+| `peer-key-expired` | Have the destination owner renew its intended node identity. Tailmux does not renew it or infer expiry from dates. |
 
-A failed write returns an error and does not report completion. For an existing file, inspect its protected `.tailmux-backup.*/original` beside the RC before recovery.
-Each RC replacement is atomic. An uninstall across multiple files can stop after an earlier file succeeds. Correct the failure and retry.
-A `.tailmux-lock` directory indicates an active or interrupted operation. Confirm no setup process is running before manually removing a stale empty lock directory.
-A crash can leave a private `.tailmux-stage.*` directory. Inspect it and its adjacent backup before manual cleanup.
+`Online:false` alone does not prevent a connection.
+IPv6 accepts the advertised spelling, ignoring hexadecimal case.
+Alternate compressed spellings are not normalized.
+When the current tailnet suffix is unavailable or invalid, use a full canonical name or advertised address.
 
-Setup discovers standard Bash RC files and `${ZDOTDIR:-$HOME}/.zshrc`. Inspect custom sourced files separately.
-Open a fresh shell after install or uninstall. A running shell can retain the old function.
+The App Store and TestFlight Tailscale variants do not expose `tailscale ssh`.
+Tailmux propagates that wrapper error and does not replace the app or retry with ordinary SSH.
+Wrapper errors, remote exit codes, and policy failures propagate through `exec`.
+A remote account without tmux exits 127.
+Configure tmux discovery in the remote account's PATH.
 
-## Restore client prerequisites
+## Resolve lifecycle refusals
 
-If Tailscale is missing, install it through your chosen package or application owner. Setup does not install dependencies or contact the daemon.
-Keep the macOS variant you already use. Setup does not remove GUI apps or migrate them to Homebrew.
-Use that application's or package owner's documented recovery process for daemon or authentication failures.
-Do not delete networking state, log out, or replace packages as an automatic troubleshooting step.
-`bash setup.sh update` is deprecated and runs no updater.
+Setup accepts only absolute HOME, ZDOTDIR, and prefix paths without line breaks.
+Spaces are supported.
+It refuses unsafe writable ancestors, unexpected ACLs, unsupported metadata, ambiguous ownership, and symlinked writes.
+The current user and root remain trusted owners.
+These checks do not protect against a malicious process with the same UID or root privileges.
 
-## Diagnose a legacy connection
+An unrelated symlinked RC can remain unchanged.
+If a symlinked RC contains a legacy managed block, remove that exact block through your dotfiles owner and retry.
+Unknown bodies or malformed markers require manual inspection.
+Do not delete a block merely because its marker mentions Tailmux.
 
-Run `tailmux doctor <hostname>` to see the resolver's selected destination.
-The legacy resolver can use system DNS and ordinary SSH. It does not enforce tailnet membership.
-For short-name failures, try the tailnet FQDN or an explicit alias in `~/.config/tailmux/hosts`.
-Keep SSH host-key checking enabled.
+Automatic legacy RC migration is supported only on macOS.
+On Linux, managed markers cause refusal before any lifecycle writes because this client cannot verify preservation of Linux inode flags and xattrs.
+Remove the legacy block through your dotfiles owner, then retry install or uninstall.
+Linux fresh installation and uninstall remain usable when no managed RC block needs changing.
 
-If access is denied or the connection is refused, ask the destination operator to check its SSH service, account authorization, and tailnet policy where applicable.
-Enabling a destination server is a separate operator task. Installing this outbound client does not authorize changing the local device's inbound server settings.
-If tmux is missing, ask the destination operator to install it and expose it in the remote account's noninteractive PATH.
+A recognized macOS removal saves `.tailmux-backup.*/original` beside the RC before publication.
+The backup directory is private and retains the original metadata.
+Executable removal saves protected content-only backups under the selected prefix.
+Those owned-client backups do not promise flag, xattr, or other metadata preservation.
+Keep these backups until you have checked the migration.
 
-## Handle legacy Taildrive
-
-Core setup no longer provisions mounts, mount dependencies, or Taildrive helpers.
-See [Taildrive legacy support and removal](taildrive.md) for the manual path.
+Interrupted receipt-first publication can leave a receipt without an executable.
+Retry the same reviewed source and prefix, or run uninstall to remove that owned receipt.
+A pre-existing executable without a valid receipt remains foreign and requires manual inspection.
+An interruption can also leave a lifecycle lock or stage directory.
+After confirming no setup process is active, inspect those exact paths before removing the stale lock and retrying.
+Setup never clears an unknown lock automatically.
+A failed migration can leave the verified executable installed and some recognized blocks already removed.
+The error remains nonzero. Retry after resolving the reported cause.
+No lifecycle failure is reported as complete.

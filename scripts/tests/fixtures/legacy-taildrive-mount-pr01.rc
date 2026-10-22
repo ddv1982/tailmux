@@ -1,8 +1,4 @@
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-# Taildrive shell function templates
-# Taildrive shell functions (sharing)
-read -r -d '' TAILDRIVE_SHARE_FUNCS <<'SHARE_EOF' || true
+# >>> tailmux managed block (taildrive) >>>
 # taildrive - file sharing over Tailscale
 _taildrive_get_os_name() {
   uname -s
@@ -112,10 +108,6 @@ tailshare-ls() {
   _taildrive_require_drive_subcommand || return 1
   tailscale drive list
 }
-SHARE_EOF
-
-# Taildrive shell functions (mounting - macOS and Linux)
-read -r -d '' TAILDRIVE_MOUNT_FUNCS <<'MOUNT_EOF' || true
 _taildrive_validate_mount_point() {
   case "${1:-}" in
     /*) return 0 ;;
@@ -260,4 +252,4 @@ tailmount-ls() {
   printf '%s\n' "$mounts"
   return 0
 }
-MOUNT_EOF
+# <<< tailmux managed block (taildrive) <<<

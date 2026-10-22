@@ -1,6 +1,4 @@
 # shellcheck shell=bash
-readonly TAILMUX_REVIEWED_CORE_DIGEST=81ffdbf42e083621213e52e7a6357837202df0fe5d27f5bf06fdc0123fedc042
-readonly TAILMUX_LEGACY_CORE_DIGEST=0063e6bc80fb24698ccaa58e78db3813ee22b7bcd2dbbfa4df6644375cefa1a6
 rc_error() {
   printf 'Error: %s (%s). No further RC changes made.\n' "$1" "$2" >&2
   return 1
@@ -85,22 +83,33 @@ validate_rc_metadata() {
   fi
 }
 
-core_body_digest() {
+content_digest() {
   if command -v shasum >/dev/null 2>&1; then
     shasum -a 256
   elif command -v sha256sum >/dev/null 2>&1; then
     sha256sum
   else
-    printf '%s\n' 'Error: shasum or sha256sum is required for managed block ownership checks.' >&2
+    printf '%s\n' 'Error: shasum or sha256sum is required for file ownership checks.' >&2
     return 1
   fi
 }
 
 inspect_rc() {
-  local rc="$1" line newline offset=0 start=-1 body=-1 end=-1 digest
+  local rc="$1" line newline offset=0 start=-1 body=-1 kind='' digest
+  local seen_core=false seen_drive=false scan_status=0
   local LC_ALL=C
+  if [[ ! -e "$rc" ]]; then
+    return 0
+  fi
+  [[ -f "$rc" ]] || { rc_error 'RC is not regular readable data' "$rc"; return 1; }
+  LC_ALL=C grep -aFq 'tailmux managed block' "$rc" || scan_status=$?
+  [[ "$scan_status" != 1 ]] || return 0
+  [[ "$scan_status" == 0 ]] || { rc_error 'Cannot inspect RC bytes' "$rc"; return 1; }
+  if [[ "$(uname -s)" != Darwin ]]; then
+    rc_error 'Automatic legacy RC migration requires macOS metadata verification; remove managed blocks through your dotfiles owner' "$rc"
+    return 1
+  fi
   validate_rc_path "$rc" || return 1
-  [[ -e "$rc" ]] || { printf '%s\n' '-1 -1'; return 0; }
   validate_rc_metadata "$rc" || return 1
   exec 3< "$rc" || return 1
   while true; do
@@ -108,53 +117,42 @@ inspect_rc() {
     IFS= read -r line || newline=0
     [[ "$newline" == 1 || -n "$line" ]] || break
     case "$line" in
-      "$TAILMUX_BLOCK_BEGIN")
-        [[ "$start" == -1 && "$newline" == 1 ]] || { rc_error 'Malformed core markers' "$rc"; return 1; }
-        start=$offset
-        body=$((offset + ${#line} + 1))
+      '# >>> tailmux managed block (tailmux) >>>'|'# >>> tailmux managed block (taildrive) >>>')
+        [[ "$start" == -1 && "$newline" == 1 ]] || { rc_error 'Malformed managed markers' "$rc"; return 1; }
+        if [[ "$line" == *'(tailmux)'* ]]; then
+          [[ "$seen_core" == false ]] || { rc_error 'Duplicate managed block' "$rc"; return 1; }
+          seen_core=true; kind=core
+        else
+          [[ "$seen_drive" == false ]] || { rc_error 'Duplicate managed block' "$rc"; return 1; }
+          seen_drive=true; kind=drive
+        fi
+        start=$offset; body=$((offset + ${#line} + 1))
         ;;
-      "$TAILMUX_BLOCK_END")
-        [[ "$body" != -1 && "$end" == -1 ]] || { rc_error 'Malformed core markers' "$rc"; return 1; }
-        [[ "$offset" -gt "$body" ]] || { rc_error 'Empty core block' "$rc"; return 1; }
-        digest="$(dd if="$rc" bs=1 skip="$body" count="$((offset - body - 1))" 2>/dev/null | core_body_digest)" || return 1
+      '# <<< tailmux managed block (tailmux) <<<'|'# <<< tailmux managed block (taildrive) <<<')
+        if [[ "$start" == -1 || ( "$kind" == core && "$line" != *'(tailmux)'* ) ||
+          ( "$kind" == drive && "$line" != *'(taildrive)'* ) || "$offset" -le "$body" ]]; then
+          rc_error 'Malformed managed markers' "$rc"; return 1
+        fi
+        digest="$(dd if="$rc" bs=1 skip="$body" count="$((offset - body - 1))" 2>/dev/null | content_digest)" || return 1
         digest="${digest%% *}"
-        case "$digest" in
-          "$TAILMUX_REVIEWED_CORE_DIGEST"|"$TAILMUX_LEGACY_CORE_DIGEST") ;;
-          *) rc_error 'Unknown or modified core block; markers do not prove ownership' "$rc"; return 1 ;;
+        case "$kind:$digest" in
+          core:81ffdbf42e083621213e52e7a6357837202df0fe5d27f5bf06fdc0123fedc042|core:0063e6bc80fb24698ccaa58e78db3813ee22b7bcd2dbbfa4df6644375cefa1a6|drive:e059586f6824dce31ddf49dc75ff70ba44ba25928a3a0516c2fcfda58f83c67e|drive:5882ed870c3811db9669644cc1ae177d9fbaa41d292b84db1d33defcca40e15f|drive:83277c6f973b7fdfd8540faea562af8d368eaf90c8840ec1a9f9403c513ad451) ;;
+          *) rc_error 'Unknown or modified managed block; markers do not prove ownership' "$rc"; return 1 ;;
         esac
-        end=$((offset + ${#line} + newline))
+        printf '%s %s\n' "$start" "$((offset + ${#line} + newline))"
+        start=-1; body=-1; kind=''
         ;;
-      *'tailmux managed block'*)
-        case "$line" in
-          '# >>> tailmux managed block (taildrive) >>>'|'# <<< tailmux managed block (taildrive) <<<') ;;
-          *) rc_error 'Unknown or malformed managed marker' "$rc"; return 1 ;;
-        esac
-        ;;
+      *'tailmux managed block'*) rc_error 'Unknown or malformed managed marker' "$rc"; return 1 ;;
     esac
-    if [[ "$start" == -1 || "$end" != -1 ]]; then
-      if [[ "$line" =~ (^|[[:space:];])(function[[:space:]]+tailmux([[:space:]\(]|$)|tailmux[[:space:]]*\([[:space:]]*\)) ]]; then
-        rc_error 'Unmanaged tailmux function; resolve it manually' "$rc"; return 1
-      fi
-      if [[ "$line" =~ (^|[[:space:];])alias[[:space:]] && "$line" =~ (^|[[:space:]\'\"])tailmux= ]]; then
-        rc_error 'Unmanaged tailmux alias; resolve it manually' "$rc"; return 1
-      fi
-    fi
     offset=$((offset + ${#line} + newline))
     [[ "$newline" == 1 ]] || break
   done <&3
   exec 3<&-
-  if [[ "$start" != -1 && "$end" == -1 ]]; then
-    rc_error 'Malformed core markers' "$rc"; return 1
-  fi
-  printf '%s %s\n' "$start" "$end"
+  [[ "$start" == -1 ]] || { rc_error 'Malformed managed markers' "$rc"; return 1; }
 }
 
 copy_rc_metadata() {
-  if [[ "$(uname -s)" == Darwin ]]; then
-    cp -p "$1" "$2"
-  else
-    cp --preserve=mode,ownership,timestamps,xattr "$1" "$2"
-  fi
+  cp -p "$1" "$2"
 }
 
 rc_preserved_metadata() {

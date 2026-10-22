@@ -9,18 +9,6 @@ validate_rc_environment() {
   done
 }
 
-detect_shell_rc() {
-  if [[ "${SHELL:-}" == *zsh* ]]; then
-    printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc"
-  elif [[ -e "$HOME/.bashrc" || -L "$HOME/.bashrc" ]]; then
-    printf '%s\n' "$HOME/.bashrc"
-  elif [[ -e "$HOME/.bash_profile" || -L "$HOME/.bash_profile" ]]; then
-    printf '%s\n' "$HOME/.bash_profile"
-  else
-    printf '%s\n' "$HOME/.profile"
-  fi
-}
-
 rc_paths() {
   printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "${ZDOTDIR:-$HOME}/.zshrc"
 }

@@ -1,12 +1,11 @@
 # shellcheck shell=bash
-core_rc_operation() (
+migrate_rc() (
   local expected_digest published_digest expected_metadata published_metadata before_metadata snapshot_metadata stage_metadata current_metadata backup_metadata
-  local operation="$1" rc="$2" parent work='' lock backup='' before='' exists=false
-  local bounds block_start block_end
+  local rc="$1" parent work='' lock backup='' before='' exists=false
+  local bounds block_start block_end cursor=0
   parent="${rc%/*}"
   bounds="$(inspect_rc "$rc")" || return 1
-  read -r block_start block_end <<< "$bounds"
-  if [[ "$operation" == uninstall && "$block_start" == -1 ]]; then
+  if [[ -z "$bounds" ]]; then
     return 0
   fi
   lock="$rc.tailmux-lock"
@@ -17,7 +16,6 @@ core_rc_operation() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
   bounds="$(inspect_rc "$rc")" || return 1
-  read -r block_start block_end <<< "$bounds"
   work="$(mktemp -d "$parent/.tailmux-stage.XXXXXX")" || return 1
   if [[ -e "$rc" ]]; then
     exists=true
@@ -36,31 +34,19 @@ core_rc_operation() (
     (umask 077; : > "$work/original"; : > "$work/result") || return 1
   fi
   bounds="$(inspect_rc "$work/original")" || return 1
-  read -r block_start block_end <<< "$bounds"
-  if [[ "$operation" == install ]]; then
-    if [[ "$block_start" != -1 ]]; then
-      {
-        dd if="$work/original" bs=1 count="$block_start" 2>/dev/null &&
-        printf '%s\n%s\n%s\n' "$TAILMUX_BLOCK_BEGIN" "$TAILMUX_FUNC" "$TAILMUX_BLOCK_END" &&
-        dd if="$work/original" bs=1 skip="$block_end" 2>/dev/null
-      } > "$work/result" || return 1
-    else
-      {
-        cat "$work/original" &&
-        printf '\n%s\n%s\n%s\n' "$TAILMUX_BLOCK_BEGIN" "$TAILMUX_FUNC" "$TAILMUX_BLOCK_END"
-      } > "$work/result" || return 1
-    fi
-  else
-    {
-      dd if="$work/original" bs=1 count="$block_start" 2>/dev/null &&
-      dd if="$work/original" bs=1 skip="$block_end" 2>/dev/null
-    } > "$work/result" || return 1
-  fi
+  {
+    while read -r block_start block_end; do
+      dd if="$work/original" bs=1 skip="$cursor" count="$((block_start - cursor))" 2>/dev/null || exit 1
+      cursor=$block_end
+    done <<< "$bounds"
+    dd if="$work/original" bs=1 skip="$cursor" 2>/dev/null
+  } > "$work/result" || return 1
+
   if cmp -s "$work/original" "$work/result"; then
-    printf 'Core block already current in %s\n' "$rc"
+    printf 'Managed blocks already absent in %s\n' "$rc"
     return 0
   fi
-  expected_digest="$(core_body_digest < "$work/result")" || return 1
+  expected_digest="$(content_digest < "$work/result")" || return 1
   expected_metadata="$(rc_preserved_metadata "$work/result")" || return 1
   if [[ "$exists" == true && "$expected_metadata" != "$before_metadata" ]]; then
     rc_error 'Staged RC metadata changed during the write' "$rc"; return 1
@@ -85,10 +71,10 @@ core_rc_operation() (
     rc_error 'RC replacement failed' "$rc"; return 1
   fi
   validate_rc_path "$rc" || return 1
-  published_digest="$(core_body_digest < "$rc")" || return 1
+  published_digest="$(content_digest < "$rc")" || return 1
   published_metadata="$(rc_preserved_metadata "$rc")" || return 1
   if [[ "$expected_digest" != "$published_digest" || "$expected_metadata" != "$published_metadata" ]]; then
     rc_error 'Published RC content or metadata verification failed; inspect the backup' "$rc"; return 1
   fi
-  printf 'Core block %s completed in %s\n' "$operation" "$rc"
+  printf 'Recognized managed blocks removed from %s\n' "$rc"
 )

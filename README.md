@@ -1,110 +1,133 @@
 # tailmux
 
-Connect to an SSH destination and resume or create a tmux session.
+Tailmux selects a known Tailscale peer and resumes a tmux session through `tailscale ssh`.
+It attaches to any existing session, or creates one when attachment fails.
 
-```bash
-tailmux macbook-pro
-tailmux 100.101.102.103
-```
+## Install the local client
 
-## Prerequisites
-
-Use Bash on macOS or Linux to run setup. The legacy function runs in Bash or Zsh.
-Install and maintain Tailscale through its existing package or application owner.
-The client needs OpenSSH. The destination account needs tmux in its noninteractive shell PATH and an SSH service that permits access.
-Setup checks Tailscale availability without contacting its daemon. It can install the function before Tailscale is available.
-
-Client setup does not install, update, or remove packages. It does not change services, operator privileges, authentication, Tailscale SSH settings, applications, policy, or Tailscale state.
-Destination server configuration belongs to its operator. Client installation does not require enabling an inbound SSH server on your own device.
-
-## Install from a reviewed checkout
-
-Inspect the local checkout, then run:
+Use a reviewed local checkout:
 
 ```bash
 bash setup.sh install
+"$HOME/.local/bin/tailmux" --version
 ```
 
-Setup uses only that checkout's modules. Remote process-substitution installation is disabled until a reviewed release distribution path exists.
-Open a fresh shell after setup.
-
-This unit still installs the reviewed legacy core function into your shell RC file. The standalone executable and resolver migration are separate work.
-For Zsh, setup uses `${ZDOTDIR:-$HOME}/.zshrc`. For Bash, it chooses the first existing `.bashrc` or `.bash_profile`, then falls back to `.profile`.
-
-Install and uninstall preflight those four standard RC paths. They refuse unmanaged `tailmux` functions or aliases, unknown or modified core blocks, malformed markers, symlinks, and symlinked ancestors.
-They recognize only the examined 0.1.0 core template and its PR-01 security patch.
-RC files must be current-user owned, have one hard link, and forbid group or other writes. The direct parent must be current-user owned and forbid group or other writes too.
-Ancestors must belong to the current user or root. Writable ancestors require the sticky bit.
-RC-file ACLs require manual handling. Directory ACLs are refused except the exact macOS default entry `0: group:everyone deny delete`.
-That deny-only entry can appear on the direct parent or a higher ancestor and remains unchanged. Unknown entries and mutating grants are refused.
-
-Setup preserves bytes outside recognized core spans, owner, group, and mode. On macOS it preserves and verifies file flags and xattrs with the system copy and xattr tools. On Linux it requires GNU `cp` with explicit xattr preservation.
-A changed RC gets a protected `.tailmux-backup.*` directory beside it before same-directory replacement.
-Keep those backups until you have checked the result. A retry leaves an already-current block unchanged.
-
-## Setup commands
+The client version is `0.2.0-dev`.
+Setup installs one executable and a small ownership receipt under `~/.local/bin`.
+For another destination, pass an absolute binary directory:
 
 ```bash
-bash setup.sh install
-bash setup.sh uninstall
-bash setup.sh update
-bash setup.sh --help
-bash setup.sh --version
+bash setup.sh install --prefix "/absolute/path/bin"
+bash setup.sh uninstall --prefix "/absolute/path/bin"
 ```
 
-Help and version work offline without loading any modules.
-`update` returns a deprecation error without loading modules or running package commands. Use each dependency's existing package owner.
-No command prompts for machine administration.
+Setup adds no PATH entry or shell code.
+Use the printed absolute executable path if your shell does not find it.
+An existing alias, function, or loaded legacy function can shadow bare `tailmux`.
+The installer preserves unmanaged shell code and does not claim to discover every declaration.
 
-## Usage
+You need Bash 3.2 or later, jq, Tailscale, and OpenSSH locally.
+The destination needs tmux, operator-configured Tailscale SSH, policy permission, and advertised SSH host keys.
+Install and update dependencies through their existing package owners.
+Setup never installs packages, changes apps or services, enables servers, assigns operators, logs out, or removes networking state.
+
+## Connect to a known peer
 
 ```bash
-tailmux <host>
-tailmux doctor <host>
-tailmux --help
-tailmux --version
+"$HOME/.local/bin/tailmux" work
+"$HOME/.local/bin/tailmux" alice@work.example.ts.net
+"$HOME/.local/bin/tailmux" 100.64.0.20
+"$HOME/.local/bin/tailmux" fd7a:115c:a1e0::2
+"$HOME/.local/bin/tailmux" doctor work
+"$HOME/.local/bin/tailmux" doctor
 ```
 
-The legacy resolver tries direct IPs, the alias file, Tailscale status JSON, Tailscale DNS, optional LAN lookup, and system DNS. It passes unresolved names to SSH.
-It does not enforce tailnet membership. Check the reported destination before connecting.
-`TAILMUX_LAN_FALLBACK=1` enables the optional `<host>.local` lookup.
+Connect accepts exactly one selector, optionally prefixed with `user@`.
+Doctor without a selector reports basic local versions.
+Doctor with a selector resolves it without SSH.
+Help and version work offline without dependencies.
+Extra options, remote commands, session names, and SSH flags are rejected.
 
-Aliases are data in `~/.config/tailmux/hosts`, or the path in `TAILMUX_HOSTS_FILE`:
+Selectors match a canonical peer DNS name or an exact advertised address in one status snapshot.
+Canonical names ignore ASCII case and one trailing dot.
+Short names match only within the current `CurrentTailnet.MagicDNSSuffix`.
+A shared peer outside that suffix needs its full canonical name, address, or an explicit alias.
+Reported `HostName` is never identity evidence.
+IPv6 selectors use the advertised hexadecimal spelling, ignoring case.
+Equivalent compression spellings, brackets, zone identifiers, and embedded IPv4 notation are unsupported.
+
+An unknown or ambiguous selector fails before transport.
+Address ranges alone never establish membership.
+The client checks the selected canonical name and every selected-peer address against all visible peer records, including stale records and records without keys.
+`Online:false` is advisory.
+`Expired:true` prevents connection with `peer-key-expired`.
+No error falls back to system DNS, mDNS, raw SSH, another user, or weaker host-key verification.
+
+## Define declarative aliases
+
+Create `~/.config/tailmux/hosts` as data:
 
 ```text
-home 100.64.0.10
-mini mini.example-tailnet.ts.net
+# Short label followed by a full canonical name or advertised address
+home work.example.ts.net
+shared shared.other.ts.net
+build 100.64.0.20
 ```
 
-Tailmux invokes local OpenSSH. Tailscale SSH applies when the destination runs that server and tailnet policy permits access.
-Other destinations need their own SSH service and access controls. Keep SSH host-key checking enabled.
-The remote account owns executable discovery. Tailmux does not copy the local PATH or add package-manager directories on the destination.
+Set `TAILMUX_HOSTS_FILE` to select another file.
+A missing default file is optional.
+A missing explicit override is an error.
+Blank lines and full-line comments are accepted.
+Every other line has exactly two fields.
+Duplicate normalized labels, short targets, alias chains, extra fields, usernames, and shell syntax are rejected.
+The client never sources or evaluates the file.
+An alias takes precedence over the same short canonical label.
 
-## Uninstall core functions
+## Migrate and uninstall
 
-Run from the same reviewed local checkout:
+Install and uninstall inspect standard Bash RC files and `${ZDOTDIR:-$HOME}/.zshrc` as data.
+They remove only exact fingerprinted legacy core or Taildrive managed blocks.
+Malformed markers or modified bodies cause refusal before lifecycle writes.
+Unmanaged aliases, functions, and sourced code remain byte-for-byte unchanged.
+A symlinked RC containing a managed block requires manual migration through your dotfiles owner.
+An unrelated symlinked RC can remain untouched.
+On macOS, recognized block removal preserves surrounding bytes, verifies flags and xattrs, and saves a protected backup beside the RC.
+On Linux, any legacy managed markers cause refusal before lifecycle writes. Remove legacy blocks through your dotfiles owner and retry.
+Linux fresh installation and uninstall remain available when no managed RC block needs changing.
+The installer never executes RC contents.
 
 ```bash
 bash setup.sh uninstall
 ```
 
-Uninstall removes only recognized core blocks from the standard RC paths. It leaves packages, Tailscale identity, networking settings, mounts, shares, and legacy Taildrive blocks intact.
-Open a fresh shell to discard loaded functions.
-Arbitrary sourced dotfiles and other custom RC locations require manual inspection.
-Inspection detects literal declarations. It cannot discover aliases or functions created dynamically or through other sourced files.
-See [troubleshooting](docs/troubleshooting.md) for refusal and recovery guidance.
+Uninstall verifies the executable path and digest against its receipt, saves content-only backups of owned client files, then removes them.
+These client backups do not promise metadata preservation.
+Foreign files, modified files, hardlinks, and ambiguous links are refused.
+Aliases, unrelated files, backups, dependency packages, and networking identity remain.
+Repeat install and uninstall are supported.
+For a different installed version, uninstall it through a reviewed checkout before installing this one.
+`bash setup.sh update` is deprecated and performs no update.
+Remote and process-substitution setup are disabled.
 
-## Legacy Taildrive
+## Compatibility and verification
 
-Core setup no longer installs or manages Taildrive helpers or mount dependencies.
-Existing helpers remain legacy code pending retirement during the executable migration.
-See [Taildrive legacy support and removal](docs/taildrive.md) before using or removing an existing installation.
+The status schema and wrapper argument order are grounded in Tailscale v1.104.2.
+The serialized host-key field is `sshHostKeys`.
+App Store and TestFlight builds do not provide this wrapper.
+Their error remains explicit, with no app replacement or transport downgrade.
+Remote PATH belongs to the destination account and is never copied from the caller.
+The wrapper and deliberately configured local SSH configuration remain trusted.
+
+Preflight and the wrapper use separate coordination snapshots.
+Tailmux trusts current coordination identity and does not atomically pin a stable peer ID across an address reassignment.
+See the [architecture reference](docs/architecture.md) and [troubleshooting guide](docs/troubleshooting.md).
+
+This development client has local fixture and lifecycle tests.
+Authenticated SSH, key mismatch, policy denial, interactive terminals, and Linux platform behavior still need the parent plan's isolated live evidence.
+Local test success is not a release-ready verdict.
+Taildrive helpers have been removed. See [legacy Taildrive migration](docs/taildrive.md).
 
 ## Development
-
-`setup.sh` loads local core lifecycle modules from `scripts/lib` after early CLI dispatch.
-Runtime templates remain separate from package and server administration.
-Tests use disposable homes and fake network, SSH, mount, package, and privilege commands.
 
 ```bash
 bash scripts/tests/run.sh lint
@@ -113,9 +136,10 @@ bash scripts/tests/run.sh full
 bash scripts/tests/smoke.sh
 ```
 
-The full suite retains resolver, legacy Taildrive runtime, and PR-01 security regressions alongside the new installer lifecycle tests.
-CI workflow hardening remains separate work.
-
-## License
+Tests require Python 3 standard library, jq, and ShellCheck.
+Runtime requires no Python.
+Fixtures contain sanitized synthetic public records and faithful legacy RC bytes.
+Tests invoke the actual executable and setup CLI in disposable homes with fake transport and administration commands.
+Each subprocess receives an explicit environment with only required paths, locale, shell, and test controls.
 
 Released under the [MIT License](LICENSE).
