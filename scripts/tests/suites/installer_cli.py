@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import hashlib
+import json
 from pathlib import Path
 import platform
 import shutil
@@ -71,6 +73,554 @@ class Lifecycle(unittest.TestCase):
 
     def tree(self):
         return sorted(str(p.relative_to(self.home)) for p in self.home.rglob('*'))
+
+    def older_owned(self):
+        self.success('install')
+        binary = self.prefix / 'tailmux'
+        older = b'#!/bin/bash\nprintf "older usable client\\n"\n'
+        binary.write_bytes(older)
+        receipt = ('tailmux-receipt-v1\n' + str(binary) + '\n' + hashlib.sha256(older).hexdigest() + '\n').encode()
+        (self.prefix / '.tailmux-receipt').write_bytes(receipt)
+        return older, receipt
+
+    def inspection(self):
+        code = '''for module in platform rc_blocks managed_blocks install; do
+source "$1/scripts/lib/$module.sh"
+done
+inspect_installation "$2" || exit
+printf '%s\\n' "$INSTALL_STATE" "$INSTALL_PREFIX" "$INSTALL_CURRENT_DIGEST" "$INSTALL_RECEIPT_DIGEST" "$INSTALL_TRANSACTION"
+'''
+        result = subprocess.run(['/bin/bash', '-u', '-c', code, 'inspect', str(ROOT), str(self.prefix)],
+                                env=cli_environment(self.bin, self.env), capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def assert_old_pair(self, older, receipt):
+        self.assertEqual((self.prefix / 'tailmux').read_bytes(), older)
+        self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), receipt)
+        self.assertFalse((self.prefix / '.tailmux-transaction').exists())
+        self.assertFalse((self.prefix / '.tailmux-install-lock').exists())
+
+    def test_p1_inspection_states_and_refusals(self):
+        self.assertEqual(self.inspection(), ['absent', str(self.prefix), '', '', ''])
+        older, receipt = self.older_owned()
+        digest = hashlib.sha256(older).hexdigest()
+        self.assertEqual(self.inspection(), ['owned', str(self.prefix), digest, digest, ''])
+        binary = self.prefix / 'tailmux'
+        binary.write_bytes(older + b': changed\n')
+        self.assertEqual(self.inspection()[0], 'modified')
+        for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+            self.refusal(*args, contains='modified installation')
+        binary.unlink()
+        self.assertEqual(self.inspection()[0], 'receipt-only')
+        self.refusal('install', '--replace-owned', contains='existing owned executable')
+        (self.prefix / '.tailmux-receipt').unlink()
+        binary.write_bytes(b'foreign\n')
+        self.assertEqual(self.inspection()[0], 'foreign')
+        binary.unlink()
+        os.mkfifo(binary)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        self.refusal('install', '--replace-owned')
+        binary.unlink()
+        binary.symlink_to(self.root / 'missing')
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        self.refusal('install', '--replace-owned')
+        binary.unlink()
+        binary.write_bytes(older)
+        binary.chmod(0o755)
+        r = self.prefix / '.tailmux-receipt'
+        for data in (b'foreign\n', receipt + b'extra\n', receipt.rstrip(b'\n'), receipt + b'\0', b'x' * 16385):
+            r.write_bytes(data)
+            self.assertIn(self.inspection()[0], ('foreign', 'unsafe'))
+            before = self.tree()
+            self.refusal('install', '--replace-owned')
+            self.assertEqual(self.tree(), before)
+            self.assertEqual(r.read_bytes(), data)
+        r.unlink()
+        os.mkfifo(r)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        self.refusal('uninstall')
+
+    def test_p1_invalid_digest_output_refuses_modified_installation(self):
+        older, receipt = self.older_owned()
+        modified = older + b': changed\n'
+        binary = self.prefix / 'tailmux'
+        binary.write_bytes(modified)
+        before = self.tree()
+        for output in ('not-a-digest', 'a' * 63, 'A' * 64, 'g' * 64, ''):
+            self.script('shasum', '#!/bin/bash\nprintf "%s" "' + output + '"\nexit 0\n')
+            for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+                with self.subTest(output=output, args=args):
+                    result = self.run_setup(*args)
+                    self.assertEqual(binary.read_bytes() if binary.exists() else None, modified)
+                    self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), receipt)
+                    self.assertEqual(self.tree(), before)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertNotIn('Client installed at', result.stdout)
+                    self.assertNotIn('Client uninstall complete', result.stdout)
+
+    def test_p1_invalid_digest_output_refuses_fresh_publication(self):
+        for index, output in enumerate(('', 'not-a-digest', 'a' * 63, 'A' * 64, 'g' * 64)):
+            with self.subTest(output=output):
+                prefix = self.home / ('prefix-' + str(index))
+                prefix.mkdir()
+                before = self.tree()
+                self.script('shasum', '#!/bin/bash\nprintf "%s" "' + output + '"\nexit 0\n')
+                self.refusal('install', '--prefix', str(prefix))
+                self.assertEqual(self.tree(), before)
+
+    def test_p1_invalid_prefix_digest_never_publishes_transaction(self):
+        older, receipt = self.older_owned()
+        attempted = self.root / 'attempted-transaction'
+        real_hash = shutil.which('shasum')
+        real_mv = shutil.which('mv')
+        self.script('shasum', '#!/bin/bash\nIFS= read -r first\n'
+                    'if [[ "$first" == "$HASH_PREFIX" ]]; then exit 0; fi\n'
+                    '{ printf "%s\\n" "$first"; cat; } | "' + real_hash + '" "$@"\n')
+        self.script('mv', '#!/bin/bash\nif [[ "$2" == */.tailmux-transaction ]]; then\n'
+                    'cp "$1" "$ATTEMPTED_TRANSACTION"\nexit 73\nfi\nexec "' + real_mv + '" "$@"\n')
+        self.refusal('install', '--replace-owned', HASH_PREFIX=str(self.prefix),
+                     ATTEMPTED_TRANSACTION=str(attempted))
+        self.assert_old_pair(older, receipt)
+        self.assertFalse(attempted.exists(), attempted.read_text() if attempted.exists() else '')
+
+    def test_p1_replace_owned_without_rc_prerequisites_and_repeat(self):
+        older, receipt = self.older_owned()
+        body = b'# >>> tailmux managed block (unknown) >>>\n'
+        self.rc.write_bytes(body)
+        self.refusal('install', contains='Unknown')
+        self.success('install', '--prefix', str(self.prefix), '--replace-owned', ZDOTDIR='relative')
+        self.assertEqual(self.rc.read_bytes(), body)
+        self.assertEqual((self.prefix / 'tailmux').read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        self.assertEqual(self.inspection()[0], 'owned')
+        backups = list(self.prefix.glob('.tailmux-backup.*'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual((backups[0] / 'tailmux').read_bytes(), older)
+        self.assertEqual((backups[0] / 'receipt').read_bytes(), receipt)
+        self.assertEqual(backups[0].stat().st_mode & 0o777, 0o700)
+        self.success('install', '--replace-owned')
+        self.assertEqual(list(self.prefix.glob('.tailmux-backup.*')), backups)
+        self.assertFalse((self.prefix / '.tailmux-transaction').exists())
+        self.assertFalse((self.prefix / '.tailmux-install-lock').exists())
+        self.refusal('uninstall', '--replace-owned')
+        self.refusal('install', '--replace-owned', '--replace-owned')
+
+    def test_p1_prefix_boundary_refusals_preserve_owned_pair(self):
+        older, receipt = self.older_owned()
+        operations = [('install',), ('install', '--replace-owned'), ('uninstall',)]
+        for node in (self.prefix, self.prefix.parent, self.home, self.root):
+            before_mode = node.stat().st_mode & 0o7777
+            try:
+                node.chmod(before_mode | 0o020)
+                for args in operations:
+                    with self.subTest(node=node, args=args):
+                        before = self.tree()
+                        self.refusal(*args)
+                        self.assertEqual(self.tree(), before)
+                        self.assert_old_pair(older, receipt)
+            finally:
+                node.chmod(before_mode)
+        for node in (self.prefix, self.prefix.parent):
+            saved = self.root / 'saved-prefix-ancestor'
+            node.rename(saved)
+            node.symlink_to(saved, target_is_directory=True)
+            try:
+                for args in operations:
+                    with self.subTest(symlink=node, args=args):
+                        before = self.tree()
+                        self.refusal(*args)
+                        self.assertEqual(self.tree(), before)
+                        self.assert_old_pair(older, receipt)
+            finally:
+                node.unlink()
+                saved.rename(node)
+        self.assertEqual(self.inspection()[0], 'owned')
+
+    def test_p1_validation_context_does_not_escape_inspection(self):
+        self.older_owned()
+        code = '''for module in platform rc_blocks managed_blocks install; do
+source "$1/scripts/lib/$module.sh"
+done
+inspect_installation "$2"
+printf '%s\\n' "$INSTALL_STATE"
+chmod 0775 "$HOME"
+inspect_installation "$2"
+printf '%s\\n' "$INSTALL_STATE"
+if lifecycle_file "$2/tailmux"; then exit 71; fi
+printf '%s\\n' rejected
+'''
+        env = cli_environment(self.bin, self.env, LIFECYCLE_CONTEXT=str(self.prefix))
+        result = subprocess.run(['/bin/bash', '-u', '-c', code, 'inspect', str(ROOT), str(self.prefix)],
+                                env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'owned\nunsafe\nrejected\n')
+
+    def test_p1_metadata_rejects_failed_nul_scan(self):
+        path = self.home / 'metadata-input'
+        code = '''set -euo pipefail
+source "$1/scripts/lib/rc_blocks.sh"
+validate_rc_metadata "$2"
+'''
+        for body in (b'', b'complete input\n'):
+            path.write_bytes(body)
+            for command in ('exit 73', 'cat; exit 73'):
+                with self.subTest(body=body, command=command):
+                    self.script('tr', '#!/bin/bash\n' + command + '\n')
+                    result = subprocess.run(['/bin/bash', '-c', code, 'metadata', str(ROOT), str(path)],
+                                            env=cli_environment(self.bin, self.env), capture_output=True, text=True, timeout=5)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(path.read_bytes(), body)
+        self.script('tr', '#!/bin/bash\nexec "' + shutil.which('tr') + '" "$@"\n')
+        path.write_bytes(b'complete input\n')
+        result = subprocess.run(['/bin/bash', '-c', code, 'metadata', str(ROOT), str(path)],
+                                env=cli_environment(self.bin, self.env), capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path.write_bytes(b'complete\0input\n')
+        result = subprocess.run(['/bin/bash', '-c', code, 'metadata', str(ROOT), str(path)],
+                                env=cli_environment(self.bin, self.env), capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_p1_publication_rechecks_ancestor_after_prepared_record(self):
+        older, receipt = self.older_owned()
+        self.script('mv', '''#!/bin/bash
+"''' + shutil.which('mv') + '''" "$@" || exit
+if [[ "$2" == */.tailmux-transaction ]]; then
+  "''' + shutil.which('chmod') + '''" 0775 "$HOME/.local"
+fi
+''')
+        result = self.refusal('install', '--replace-owned', contains='Replacement incomplete')
+        self.assertNotIn('restored previous client', result.stderr)
+        self.assertEqual((self.prefix / 'tailmux').read_bytes(), older)
+        self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), receipt)
+        self.assertTrue((self.prefix / '.tailmux-transaction').is_file())
+        self.assertTrue((self.prefix / '.tailmux-install-lock/owner').is_file())
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        self.prefix.parent.chmod(0o755)
+        self.assertEqual(self.inspection()[0], 'pending')
+        before = self.tree()
+        self.refusal('install', '--replace-owned', contains='locked')
+        self.assertEqual(self.tree(), before)
+
+    @unittest.skipUnless(platform.system() == 'Darwin', 'macOS ACL evidence only')
+    def test_p1_prefix_and_transaction_directory_acls_refuse(self):
+        older, receipt = self.older_owned()
+        for node in (self.prefix, self.prefix.parent, self.home, self.root):
+            subprocess.run(['/bin/chmod', '+a', 'everyone allow delete_child,add_subdirectory', str(node)], check=True)
+            try:
+                for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+                    with self.subTest(node=node, args=args):
+                        self.refusal(*args, contains='Unknown or mutating RC ancestor ACLs')
+                        self.assert_old_pair(older, receipt)
+            finally:
+                subprocess.run(['/bin/chmod', '-N', str(node)], check=True)
+        self.script('mv', '''#!/bin/bash
+[[ "$1" != */receipt && "$1" != */rollback-binary ]] || exit 73
+exec "''' + shutil.which('mv') + '''" "$@"
+''')
+        self.refusal('install', '--replace-owned', contains='Replacement incomplete')
+        record = self.prefix / '.tailmux-transaction'
+        fields = dict(line.split('=', 1) for line in record.read_text().splitlines()[1:])
+        for node in (self.prefix / '.tailmux-install-lock', self.prefix / fields['stage'], self.prefix / fields['backup']):
+            subprocess.run(['/bin/chmod', '+a', 'everyone allow delete_child,add_subdirectory', str(node)], check=True)
+            try:
+                self.assertEqual(self.inspection()[0], 'unsafe')
+                before = self.tree()
+                self.refusal('install', '--replace-owned')
+                self.assertEqual(self.tree(), before)
+                self.assertEqual(record.read_text().splitlines()[1], 'id=' + fields['id'])
+                self.assertEqual((self.prefix / fields['backup'] / 'tailmux').read_bytes(), older)
+                self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), receipt)
+            finally:
+                subprocess.run(['/bin/chmod', '-N', str(node)], check=True)
+        self.assertEqual(self.inspection()[0], 'pending')
+
+    def test_p1_caught_publication_failures_restore_pair(self):
+        older, receipt = self.older_owned()
+        real_mv = shutil.which('mv')
+        for destination in ('prepared', 'tailmux', '.tailmux-receipt', 'binary-published', 'committed'):
+            with self.subTest(destination=destination):
+                self.script('mv', '''#!/bin/bash
+if [[ "$1" == *tailmux-stage*/tailmux || "$1" == *tailmux-stage*/receipt || "$1" == *tailmux-stage*/transaction ]]; then
+  if [[ "$2" == "$FAIL_DEST" ]] || { [[ "$2" == */.tailmux-transaction ]] && grep -q "phase=$FAIL_PHASE" "$1"; }; then exit 73; fi
+fi
+exec "''' + real_mv + '''" "$@"
+''')
+                result = self.refusal('install', '--replace-owned', FAIL_DEST=str(self.prefix / destination), FAIL_PHASE=destination)
+                self.assertNotIn('Usage:', result.stderr)
+                self.assert_old_pair(older, receipt)
+        self.script('mv', '#!/bin/bash\nexit 0\n')
+        result = self.refusal('install', '--replace-owned')
+        self.assertNotIn('Usage:', result.stderr)
+        self.assert_old_pair(older, receipt)
+
+    def test_p1_staging_and_backup_failures_preserve_pair(self):
+        older, receipt = self.older_owned()
+        for command in ('mktemp', 'cp', 'chmod'):
+            with self.subTest(command=command):
+                tool = shutil.which(command)
+                self.script(command, '#!/bin/bash\nexit 73\n')
+                result = self.refusal('install', '--replace-owned')
+                self.assertNotIn('Usage:', result.stderr)
+                self.assert_old_pair(older, receipt)
+                (self.bin / command).unlink()
+                (self.bin / command).symlink_to(tool)
+
+    def test_p1_failed_rollback_retains_verified_transaction(self):
+        older, receipt = self.older_owned()
+        self.script('mv', '''#!/bin/bash
+[[ "$1" != */receipt && "$1" != */rollback-binary ]] || exit 73
+exec "''' + shutil.which('mv') + '''" "$@"
+''')
+        self.refusal('install', '--replace-owned', contains='Replacement incomplete')
+        self.assertEqual((self.prefix / 'tailmux').read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), receipt)
+        self.assertEqual(self.inspection()[0], 'pending')
+        record = self.prefix / '.tailmux-transaction'
+        fields = dict(line.split('=', 1) for line in record.read_text().splitlines()[1:])
+        self.assertEqual((self.prefix / fields['backup'] / 'tailmux').read_bytes(), older)
+        self.assertTrue((self.prefix / fields['stage'] / 'candidate').is_file())
+        self.assertTrue((self.prefix / '.tailmux-install-lock/owner').is_file())
+        before = record.read_bytes()
+        lines = before.splitlines(keepends=True)
+        for data in (b''.join(lines[:-1]), b''.join([lines[0], lines[2], lines[1], *lines[3:]]),
+                     before.replace(b'prefix-sha256=', b'unknown-sha256='),
+                     before.replace(fields['prefix-sha256'].encode(), b'0' * 64),
+                     before.replace(b'id=', b'id=../', 1), before.rstrip(b'\n')):
+            record.write_bytes(data)
+            self.assertEqual(self.inspection()[0], 'unsafe')
+            self.refusal('install', '--replace-owned')
+            self.assertEqual(record.read_bytes(), data)
+        record.write_bytes(before)
+        record.chmod(0o644)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        record.chmod(0o600)
+        record.unlink()
+        os.mkfifo(record)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        record.unlink()
+        target = self.root / 'transaction-target'
+        target.write_bytes(before)
+        record.symlink_to(target)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        record.unlink()
+        record.write_bytes(before)
+        record.chmod(0o600)
+        owner = self.prefix / '.tailmux-install-lock/owner'
+        owner_bytes = owner.read_bytes()
+        for data in (owner_bytes + b'extra\n', owner_bytes.replace(fields['id'].encode(), b'other'), b'x' * 257):
+            owner.write_bytes(data)
+            self.assertEqual(self.inspection()[0], 'unsafe')
+            self.refusal('install', '--replace-owned')
+            self.assertEqual(owner.read_bytes(), data)
+        owner.write_bytes(owner_bytes)
+        owner.unlink()
+        os.mkfifo(owner)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        owner.unlink()
+        target = self.root / 'owner-target'
+        target.write_bytes(owner_bytes)
+        owner.symlink_to(target)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        owner.unlink()
+        owner.write_bytes(owner_bytes)
+        owner.chmod(0o600)
+        stage = self.prefix / fields['stage']
+        saved_stage = self.root / 'saved-stage'
+        stage.rename(saved_stage)
+        stage.symlink_to(saved_stage, target_is_directory=True)
+        self.assertEqual(self.inspection()[0], 'unsafe')
+        stage.unlink()
+        saved_stage.rename(stage)
+        self.assertEqual(self.inspection()[0], 'pending')
+
+    def pause_replacement(self, boundary):
+        ready = self.root / 'replacement-ready'
+        ready.unlink(missing_ok=True)
+        self.script('mv', '''#!/bin/bash
+if [[ "$PAUSE_AT" == rollback-* && "$1" == */transaction ]] && grep -q phase=committed "$1"; then exit 73; fi
+pause=false
+case "$PAUSE_AT:$2" in
+  prepared:*/.tailmux-transaction) grep -q phase=prepared "$1" && pause=true ;;
+  binary-renamed:*/tailmux) [[ "$1" == */tailmux ]] && pause=true ;;
+  receipt-renamed:*/.tailmux-receipt) [[ "$1" == */receipt ]] && pause=true ;;
+  binary-published:*/.tailmux-transaction) grep -q phase=binary-published "$1" && pause=true ;;
+  committed:*/.tailmux-transaction) grep -q phase=committed "$1" && pause=true ;;
+esac
+case "$PAUSE_AT:$1" in
+  rollback-receipt-*:*/rollback-receipt|rollback-binary-*:*/rollback-binary) pause=true ;;
+esac
+if $pause && [[ "$PAUSE_AT" == rollback-*-before ]]; then : > "$PUBLISHER_READY"; exec /bin/sleep 30; fi
+"''' + shutil.which('mv') + '''" "$@" || exit
+if $pause; then : > "$PUBLISHER_READY"; exec /bin/sleep 30; fi
+''')
+        p = subprocess.Popen(['/bin/bash', str(SETUP), 'install', '--replace-owned'],
+                             env=cli_environment(self.bin, self.env, PAUSE_AT=boundary, PUBLISHER_READY=str(ready)),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        self.addCleanup(self.stop_process, p)
+        for _ in range(1500):
+            if ready.exists() or p.poll() is not None:
+                break
+            time.sleep(.02)
+        self.assertTrue(ready.exists(), 'replacement never reached ' + boundary)
+        return p
+
+    def stop_process(self, p):
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.communicate(timeout=5)
+
+    def reconcile_transaction(self, action):
+        self.script('mv', '#!/bin/bash\nexec "' + shutil.which('mv') + '" "$@"\n')
+        code = '''set -euo pipefail
+for module in platform rc_blocks managed_blocks install; do source "$1/scripts/lib/$module.sh"; done
+transaction_read "$2"
+case "$3" in
+  restore) transaction_restore_receipt_then_binary "$2" ;;
+  publish) transaction_publish "$2"; transaction_clear "$2" ;;
+  *) exit 2 ;;
+esac
+transaction_remove_stage "$2/$TX_STAGE"
+lifecycle_unlock "$2" "$TX_ID"
+'''
+        result = subprocess.run(['/bin/bash', '-c', code, 'reconcile', str(ROOT), str(self.prefix), action],
+                                env=cli_environment(self.bin, self.env), capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_p1_sigkill_at_each_restore_rename_can_finish_restore(self):
+        older, receipt = self.older_owned()
+        for boundary in ('rollback-receipt-before', 'rollback-receipt-after', 'rollback-binary-before', 'rollback-binary-after'):
+            with self.subTest(boundary=boundary):
+                p = self.pause_replacement(boundary)
+                os.killpg(p.pid, signal.SIGKILL)
+                stdout, _ = p.communicate(timeout=5)
+                self.assertEqual(p.returncode, -signal.SIGKILL)
+                self.assertNotIn(b'Client installed at', stdout)
+                record = self.prefix / '.tailmux-transaction'
+                fields = dict(line.split('=', 1) for line in record.read_text().splitlines()[1:])
+                state = self.inspection()
+                self.assertEqual((state[0], state[4]), ('pending', fields['id']))
+                expected_binary = older if boundary == 'rollback-binary-after' else (ROOT / 'bin/tailmux').read_bytes()
+                expected_receipt = receipt if boundary != 'rollback-receipt-before' else (
+                    'tailmux-receipt-v1\n' + str(self.prefix / 'tailmux') + '\n' + hashlib.sha256(expected_binary).hexdigest() + '\n').encode()
+                self.assertEqual((self.prefix / 'tailmux').read_bytes(), expected_binary)
+                self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), expected_receipt)
+                before = self.tree()
+                for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+                    self.refusal(*args, contains=fields['id'])
+                    self.assertEqual(self.tree(), before)
+                self.reconcile_transaction('restore')
+                self.assert_old_pair(older, receipt)
+                self.assertFalse((self.prefix / fields['stage']).exists())
+                self.assertEqual((self.prefix / fields['backup'] / 'tailmux').read_bytes(), older)
+                print('P1 restore interruption evidence ' + json.dumps({'boundary': boundary, 'exit': p.returncode,
+                      'transaction': fields['id'], 'restored_binary_sha256': hashlib.sha256(older).hexdigest()}), flush=True)
+
+    def test_p1_internal_publish_from_each_publication_boundary(self):
+        expected = (ROOT / 'bin/tailmux').read_bytes()
+        expected_receipt = ('tailmux-receipt-v1\n' + str(self.prefix / 'tailmux') + '\n' + hashlib.sha256(expected).hexdigest() + '\n').encode()
+        for boundary in ('prepared', 'binary-renamed', 'binary-published', 'receipt-renamed', 'committed'):
+            with self.subTest(boundary=boundary):
+                older, receipt = self.older_owned()
+                p = self.pause_replacement(boundary)
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate(timeout=5)
+                self.assertEqual(self.inspection()[0], 'pending')
+                record = self.prefix / '.tailmux-transaction'
+                fields = dict(line.split('=', 1) for line in record.read_text().splitlines()[1:])
+                self.reconcile_transaction('publish')
+                self.assertEqual((self.prefix / 'tailmux').read_bytes(), expected)
+                self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), expected_receipt)
+                self.assertFalse(record.exists())
+                self.assertFalse((self.prefix / fields['stage']).exists())
+                self.assertFalse((self.prefix / '.tailmux-install-lock').exists())
+                self.assertEqual((self.prefix / fields['backup'] / 'tailmux').read_bytes(), older)
+                self.assertEqual((self.prefix / fields['backup'] / 'receipt').read_bytes(), receipt)
+                self.success('install', '--replace-owned')
+
+    def test_p1_sigkill_after_record_removal_retains_owner_inspection_lock(self):
+        self.older_owned()
+        self.script('rm', '''#!/bin/bash
+"''' + shutil.which('rm') + '''" "$@" || exit
+if [[ "$1" == */.tailmux-transaction ]]; then : > "$PUBLISHER_READY"; exec /bin/sleep 30; fi
+''')
+        p = self.pause_replacement('cleanup-cleared')
+        os.killpg(p.pid, signal.SIGKILL)
+        stdout, _ = p.communicate(timeout=5)
+        self.assertEqual(p.returncode, -signal.SIGKILL)
+        self.assertNotIn(b'Client installed at', stdout)
+        state = self.inspection()
+        self.assertEqual((state[0], state[4]), ('owned', ''))
+        self.assertFalse((self.prefix / '.tailmux-transaction').exists())
+        self.assertEqual((self.prefix / 'tailmux').read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        owner = self.prefix / '.tailmux-install-lock/owner'
+        owner_bytes = owner.read_bytes()
+        self.assertTrue(owner_bytes.startswith(('tailmux-lock-v1\nuid=' + str(os.getuid()) + '\ntransaction=.tailmux-tx.').encode()))
+        before = self.tree()
+        for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+            self.refusal(*args, contains='locked; inspect before retrying')
+            self.assertEqual(self.tree(), before)
+            self.assertEqual(owner.read_bytes(), owner_bytes)
+
+    def test_p1_sigterm_rolls_back_and_competing_writer_refuses(self):
+        older, receipt = self.older_owned()
+        p = self.pause_replacement('binary-renamed')
+        self.assertEqual((self.prefix / 'tailmux').read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        self.assertEqual((self.prefix / '.tailmux-receipt').read_bytes(), receipt)
+        for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+            self.refusal(*args, contains='locked')
+        os.killpg(p.pid, signal.SIGTERM)
+        stdout, stderr = p.communicate(timeout=10)
+        self.assertNotEqual(p.returncode, 0, stderr)
+        self.assertNotIn(b'Client installed at', stdout)
+        self.assert_old_pair(older, receipt)
+        print('P1 SIGTERM evidence ' + json.dumps({'exit': p.returncode, 'stderr': stderr.decode(),
+              'binary_sha256': hashlib.sha256((self.prefix / 'tailmux').read_bytes()).hexdigest(),
+              'receipt_sha256': hashlib.sha256((self.prefix / '.tailmux-receipt').read_bytes()).hexdigest(),
+              'lock_present': (self.prefix / '.tailmux-install-lock').exists()}), flush=True)
+
+    def test_p1_sigkill_pending_at_every_publication_boundary(self):
+        older, receipt = self.older_owned()
+        for boundary in ('prepared', 'binary-renamed', 'binary-published', 'receipt-renamed', 'committed'):
+            with self.subTest(boundary=boundary):
+                p = self.pause_replacement(boundary)
+                os.killpg(p.pid, signal.SIGKILL)
+                stdout, _ = p.communicate(timeout=5)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertNotIn(b'Client installed at', stdout)
+                record = self.prefix / '.tailmux-transaction'
+                fields = dict(line.split('=', 1) for line in record.read_text().splitlines()[1:])
+                print('P1 SIGKILL evidence ' + json.dumps({'boundary': boundary, 'exit': p.returncode,
+                      'record': record.read_text(), 'binary_sha256': hashlib.sha256((self.prefix / 'tailmux').read_bytes()).hexdigest(),
+                      'receipt_sha256': hashlib.sha256((self.prefix / '.tailmux-receipt').read_bytes()).hexdigest()}), flush=True)
+                state = self.inspection()
+                self.assertEqual(state[0], 'pending')
+                self.assertEqual(state[4], fields['id'])
+                owner = self.prefix / '.tailmux-install-lock/owner'
+                self.assertEqual(owner.read_text(), 'tailmux-lock-v1\nuid=' + str(os.getuid()) + '\ntransaction=' + fields['id'] + '\n')
+                self.assertEqual(owner.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(record.stat().st_mode & 0o777, 0o600)
+                for args in [('install',), ('install', '--replace-owned'), ('uninstall',)]:
+                    self.refusal(*args, contains=fields['id'])
+                saved = record.read_bytes()
+                for damaged in (saved + b'extra=1\n', saved.replace(b'phase=', b'phase=unknown-', 1),
+                                saved.replace(b'backup=.tailmux-backup.', b'backup=../', 1), saved + b'\0', b'x' * 16385):
+                    record.write_bytes(damaged)
+                    self.assertEqual(self.inspection()[0], 'unsafe')
+                    self.refusal('install', '--replace-owned')
+                    self.assertEqual(record.read_bytes(), damaged)
+                record.write_bytes(saved)
+                (self.prefix / 'tailmux').write_bytes(b'third digest\n')
+                self.assertEqual(self.inspection()[0], 'unsafe')
+                (self.prefix / 'tailmux').write_bytes(older if boundary == 'prepared' else (ROOT / 'bin/tailmux').read_bytes())
+                backup = self.prefix / fields['backup']
+                backup_bytes = (backup / 'tailmux').read_bytes()
+                (backup / 'tailmux').write_bytes(b'damaged backup\n')
+                self.assertEqual(self.inspection()[0], 'unsafe')
+                (backup / 'tailmux').write_bytes(backup_bytes)
+                self.assertEqual(self.inspection()[0], 'pending')
+                self.reconcile_transaction('restore')
+                self.assert_old_pair(older, receipt)
+                self.assertFalse((self.prefix / fields['stage']).exists())
 
     def test_offline_dispatch_without_modules(self):
         setup = self.root / 'setup.sh'
@@ -308,7 +858,7 @@ exec "''' + real_mv + '''" "$@"
     def test_false_success_removal_and_missing_binary_receipt(self):
         self.success('install')
         real_rm = shutil.which('rm')
-        self.script('rm', '#!/bin/bash\nexit 0\n')
+        self.script('rm', '#!/bin/bash\n[[ "$1" != */tailmux && "$1" != */.tailmux-receipt ]] || exit 0\nexec "' + real_rm + '" "$@"\n')
         self.refusal('uninstall', contains='Executable removal verification failed')
         self.assertTrue((self.prefix / 'tailmux').exists())
         self.assertTrue((self.prefix / '.tailmux-receipt').exists())
