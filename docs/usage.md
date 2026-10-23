@@ -38,7 +38,7 @@ Use `TAILMUX_HOSTS_FILE` for another file; an explicit missing file is an error.
 The verified shell entrypoint in the README accepts `install`, `update`, or `uninstall`.
 It authenticates the pinned release installer and package before running the packaged setup code.
 No GitHub login or repository checkout is required. All three actions need network access and the installer prerequisites listed in the README.
-This entrypoint currently targets v0.2.0. Obtain an updated command from the trusted README when a newer release is available.
+This entrypoint currently targets v0.2.1. Obtain an updated command from the trusted README when a newer release is available.
 
 `install` creates the executable and ownership receipt in `~/.local/bin`.
 Repeating installation of the same version is supported. It refuses to replace a different version; use `update` for that.
@@ -70,7 +70,7 @@ A symlinked RC containing a managed block needs manual migration through its dot
 On macOS, recognized removal preserves surrounding bytes and supported metadata and saves a protected backup beside the RC.
 On Linux, migration checks inode flags and extended attributes and preserves them in the replacement and backup.
 It requires GNU cp, lsattr, and Python 3. Unsupported inode flags or unverifiable metadata need manual migration.
-The published v0.2.0 package predates Linux migration support; its direct install command still requires manual legacy-block removal until a corrected package is released.
+Use v0.2.1 or later for automatic Linux migration. The earlier v0.2.0 package requires manual legacy-block removal.
 The installer never executes RC contents. Existing shells may retain previously loaded functions.
 
 Taildrive helpers were removed; see [legacy Taildrive migration](taildrive.md).

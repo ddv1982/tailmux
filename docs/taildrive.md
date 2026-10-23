@@ -14,7 +14,7 @@ bash setup.sh uninstall
 
 Automatic migration recognizes the original and containment-patched managed bodies on macOS and Linux.
 Linux migration needs GNU cp, lsattr, and Python 3; unsupported metadata still needs removal through your dotfiles owner.
-The published v0.2.0 package predates Linux migration support and requires manual block removal on Linux.
+Use v0.2.1 or later for automatic Linux migration; v0.2.0 requires manual block removal on Linux.
 Setup refuses managed markers before lifecycle writes and makes no Linux RC metadata-preservation claim.
 It saves a protected byte-for-byte RC backup and preserves unrelated shell code.
 Unknown or changed bodies, malformed markers, and symlinked RC writes require manual inspection through your dotfiles owner.
