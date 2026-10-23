@@ -44,6 +44,15 @@ class Runtime(unittest.TestCase):
         self.script('tailscale', '''#!/bin/bash
 printf '%s\\0' "$@" >> "$TRACE"
 printf '\\n' >> "$TRACE"
+socket=''
+if [[ "${1:-}" == --socket=* ]]; then socket=${1#--socket=}; shift; fi
+if [[ -n "${EXPECTED_SOCKET:-}" ]]; then
+  if [[ "$socket" == "$EXPECTED_SOCKET" ]]; then
+    STATUS_FIXTURE=$SELECTED_STATUS_FIXTURE
+  elif [[ -n "$socket" ]]; then
+    exit 37
+  fi
+fi
 case "$1" in
   status) cat "$STATUS_FIXTURE"; exit "${STATUS_EXIT:-0}" ;;
   version) printf '%s\\n' '1.104.2 fixture'; exit 0 ;;
@@ -105,6 +114,70 @@ exit 97
         self.assertIs(target['online'], False)
         self.assertIs(target['expired'], False)
         self.assertEqual(self.calls(), [[b'status', b'--json']])
+
+    def test_selected_socket_resolves_and_executes_same_daemon(self):
+        selected = self.root / 'selected.json'
+        self.snapshot['Peer']['nodekey:fixture-a']['TailscaleIPs'] = ['100.64.0.88']
+        selected.write_text(json.dumps(self.snapshot))
+        self.snapshot['BackendState'] = 'Stopped'
+        self.write_status()
+        socket = str(self.root / "daemon space 'quote' \"double\" *?[x] ;$(touch marker)`id`.sock")
+        changes = dict(EXPECTED_SOCKET=socket, SELECTED_STATUS_FIXTURE=str(selected))
+        result = self.run_client('work', **changes)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('stopped/not-ready', result.stderr)
+        self.assertEqual(self.calls(), [[b'status', b'--json']])
+        self.trace.unlink()
+        result = self.run_client('doctor', 'work', TAILMUX_TAILSCALE_SOCKET=socket, **changes)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['address'], '100.64.0.88')
+        self.assertEqual(self.calls(), [[f'--socket={socket}'.encode(), b'status', b'--json']])
+        self.trace.unlink()
+        result = self.run_client('Alice@work', TAILMUX_TAILSCALE_SOCKET=socket, **changes)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls(), [[f'--socket={socket}'.encode(), b'status', b'--json'],
+                                      [f'--socket={socket}'.encode(), b'ssh', b'Alice@100.64.0.88', b'-t', REMOTE.encode()]])
+        self.assertFalse((self.root / 'marker').exists())
+        self.assertFalse(self.forbidden.exists())
+
+    def test_failed_explicit_socket_never_retries_working_default(self):
+        socket = str(self.root / 'missing.sock')
+        result = self.run_client('work', TAILMUX_TAILSCALE_SOCKET=socket,
+                                 EXPECTED_SOCKET=str(self.root / 'working.sock'),
+                                 SELECTED_STATUS_FIXTURE=str(self.status))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('daemon-unavailable', result.stderr)
+        self.assertIn(socket, result.stderr)
+        self.assertEqual(self.calls(), [[f'--socket={socket}'.encode(), b'status', b'--json']])
+
+    def test_socket_configuration_is_validated_before_transport(self):
+        for socket in ['', 'relative.sock'] + ['/tmp/control' + chr(c) for c in [*range(1, 32), 127]]:
+            for args in [('work',), ('doctor',), ('doctor', 'work')]:
+                with self.subTest(socket=repr(socket), args=args):
+                    self.trace.unlink(missing_ok=True)
+                    result = self.run_client(*args, TAILMUX_TAILSCALE_SOCKET=socket)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertEqual(result.stderr, 'tailmux: invalid-config: TAILMUX_TAILSCALE_SOCKET must be an absolute path without ASCII control bytes\n')
+                    self.assertEqual(self.calls(), [])
+        self.assertFalse(self.forbidden.exists())
+
+    def test_selected_socket_backend_failures_retain_category_and_context(self):
+        socket = str(self.root / 'selected.sock')
+        for state, category in [('Stopped', 'stopped/not-ready'), ('NeedsLogin', 'logged-out')]:
+            self.snapshot['BackendState'] = state
+            self.write_status()
+            self.trace.unlink(missing_ok=True)
+            result = self.run_client('work', TAILMUX_TAILSCALE_SOCKET=socket)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(category, result.stderr)
+            self.assertIn(socket, result.stderr)
+            self.assertEqual(self.calls(), [[f'--socket={socket}'.encode(), b'status', b'--json']])
+
+    def test_selected_socket_preserves_exec_pid_signals_exit_and_stderr(self):
+        self.env['TAILMUX_TAILSCALE_SOCKET'] = str(self.root / 'selected.sock')
+        self.test_wrapper_exit_error_and_exec_signal()
+        self.assertTrue(all(call[0] == f"--socket={self.env['TAILMUX_TAILSCALE_SOCKET']}".encode()
+                            for call in self.calls()))
 
     def test_address_shared_and_short_scoping(self):
         for selector, address in [('100.64.0.20', '100.64.0.20'),
@@ -290,7 +363,7 @@ exit 97
             (self.bin / name).rename(self.bin / (name + '.away'))
         for args in [('--help',), ('--version',), ('-h',), ('-V',)]:
             self.trace.unlink(missing_ok=True)
-            p = self.run_client(*args, allow_missing_tailscale=True)
+            p = self.run_client(*args, allow_missing_tailscale=True, TAILMUX_TAILSCALE_SOCKET='bad\nconfig')
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertEqual(self.calls(), [])
         self.failure('missing-dependency', 'work', allow_missing_tailscale=True)
@@ -369,7 +442,7 @@ for path, classname in [(sys.argv[1], "Runtime"), (sys.argv[2], "Lifecycle")]:
         else:
             result = case.run_setup("--version")
         assert result.returncode == 0, result.stderr
-        assert result.stdout == "tailmux 0.2.2\\n", result.stdout
+        assert result.stdout == "tailmux 0.2.3\\n", result.stdout
     finally:
         case.doCleanups()
 '''
@@ -470,7 +543,7 @@ exit "${REPORT_EXIT:-0}"
         self.assertEqual(exception['value'], 'daemon-unavailable')
         frame = exception['stacktrace']['frames'][0]
         self.assertEqual(frame['filename'], 'bin/tailmux')
-        self.assertIn("fail 'daemon-unavailable:", CLIENT.read_text().splitlines()[frame['lineno'] - 1])
+        self.assertRegex(CLIENT.read_text().splitlines()[frame['lineno'] - 1], r'''fail ["']daemon-unavailable:''')
         for private in ('private-user', 'private-device', 'do-not-send', str(self.home), str(self.root), 'tailscale status failed'):
             self.assertNotIn(private, self.report.read_text())
         args = self.report_args.read_bytes().split(b'\0')[:-1]

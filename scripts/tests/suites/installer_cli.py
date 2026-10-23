@@ -77,7 +77,7 @@ class Lifecycle(unittest.TestCase):
         setup.write_bytes(SETUP.read_bytes())
         for option in ('--help', '-h', '--version', '-V'):
             p = self.success(option, setup=setup)
-            self.assertIn('0.2.2', p.stdout)
+            self.assertIn('0.2.3', p.stdout)
         self.refusal('update', setup=setup, contains='deprecated')
         self.refusal('install', setup=setup, contains='Required module missing')
         self.refusal('--help', 'extra', setup=setup)
@@ -103,7 +103,7 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in self.prefix.iterdir()), ['.tailmux-receipt', 'tailmux'])
         self.success('install')
         p = subprocess.run([str(self.prefix / 'tailmux'), '--version'], env=cli_environment(self.bin, self.env), capture_output=True, text=True)
-        self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.2\n'))
+        self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.3\n'))
         self.success('uninstall')
         self.assertFalse((self.prefix / 'tailmux').exists())
         self.assertEqual(self.rc.read_bytes(), body)
@@ -119,6 +119,13 @@ class Lifecycle(unittest.TestCase):
         self.success('install')
         trace = self.root / 'client-argv'
         self.script('tailscale', '''#!/bin/bash
+if [[ "${1:-}" == --socket=* ]]; then
+  [[ "$1" == "--socket=$EXPECTED_SOCKET" ]] || exit 98
+  printf '%s\\0' "$1" > "$SOCKET_TRACE"
+  shift
+else
+  exit 98
+fi
 case "$1" in
   status) cat "$STATUS_FIXTURE" ;;
   ssh) printf '%s\\0' "$@" > "$CLIENT_TRACE"; exit 37 ;;
@@ -128,9 +135,13 @@ esac
         jq = self.bin / 'jq'
         jq.symlink_to(shutil.which('jq'))
         (self.bin / 'head').symlink_to(shutil.which('head'))
-        env = dict(self.env, STATUS_FIXTURE=str(FIXTURES / 'status-v1.104.2/running.json'), CLIENT_TRACE=str(trace))
+        socket = str(self.root / 'installed daemon.sock')
+        socket_trace = self.root / 'socket-argv'
+        env = dict(self.env, STATUS_FIXTURE=str(FIXTURES / 'status-v1.104.2/running.json'), CLIENT_TRACE=str(trace),
+                   TAILMUX_TAILSCALE_SOCKET=socket, EXPECTED_SOCKET=socket, SOCKET_TRACE=str(socket_trace))
         p = subprocess.run([str(self.prefix / 'tailmux'), 'alice@work'], env=cli_environment(self.bin, env), capture_output=True, text=True)
         self.assertEqual(p.returncode, 37, p.stdout + p.stderr)
+        self.assertEqual(socket_trace.read_bytes(), f'--socket={socket}\0'.encode())
         argv = trace.read_bytes().split(b'\0')[:-1]
         self.assertEqual(argv[:3], [b'ssh', b'alice@100.64.0.20', b'-t'])
         self.assertEqual(len(argv), 4)
@@ -146,7 +157,7 @@ esac
             self.assertEqual(self.rc.read_bytes(), body)
             self.assertFalse((self.home / 'RC_WAS_EXECUTED').exists())
             p = subprocess.run([str(self.prefix / 'tailmux'), '--version'], env=cli_environment(self.bin, self.env), capture_output=True, text=True)
-            self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.2\n'))
+            self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.3\n'))
             self.success('uninstall')
             self.assertEqual(self.rc.read_bytes(), body)
 

@@ -4,6 +4,12 @@
 It runs under Bash 3.2 or later and contains its private jq filter.
 It never loads setup modules or shell startup files.
 
+One immutable command array holds the PATH-resolved `tailscale` invocation and optional global socket argument.
+`TAILMUX_TAILSCALE_SOCKET` selects an absolute local socket path for all version probes, status reads, and SSH.
+Unset configuration retains Tailscale's default selection. Invalid explicit configuration fails before daemon access.
+An unavailable selected endpoint never triggers a retry through the default daemon.
+Doctor reports endpoint selection without discovering other installations or changing services.
+
 Optional Sentry error reporting is enabled only by `TAILMUX_SENTRY_DSN`.
 The explicit failure handler sends fixed categories for missing dependencies, daemon failures,
 invalid status data, and local I/O failures. It includes a relative source location,
@@ -33,10 +39,10 @@ Explicit address requests retain that address.
 Name requests choose IPv4 before IPv6, then use lexical order within the family.
 Public-key validation checks single-line structure only. SSH performs cryptographic verification.
 
-The sole transport call has this argument order:
+The sole transport call expands that same command array:
 
 ```bash
-exec tailscale ssh "$validatedUserAndChosenAddress" -t "$constantRemoteProgram"
+exec "${tailscale_cmd[@]}" ssh "$validatedUserAndChosenAddress" -t "$constantRemoteProgram"
 ```
 
 The fixed remote program discovers tmux through the remote account, runs `tmux attach || tmux new`, and exits 127 if tmux is missing.
