@@ -11,10 +11,10 @@ Run this as your normal user to install [v0.2.0](https://github.com/ddv1982/tail
 ```bash
 curl -qfsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 \
   --max-time 110 --max-redirs 5 --max-filesize 65536 \
-  https://raw.githubusercontent.com/ddv1982/tailmux/92077ea6d07cc6184b979fb134c8edbd11c923f5/install.sh |
+  https://raw.githubusercontent.com/ddv1982/tailmux/218bf6bd5a74e2e6c725dc1ec01b99deff8d79a6/install.sh |
 python3 -I -c 'import hashlib, os, subprocess, sys
 script = sys.stdin.buffer.read(65537)
-if hashlib.sha256(script).hexdigest() != "bfe738a5fc3b2e37249254827b9203ab871d26dc17055fa2d99055a7135bb70f": sys.exit("Installer checksum mismatch.")
+if hashlib.sha256(script).hexdigest() != "7c2a2f13a9eec8a37c95cfdf1667838dd901682d17655d6b144a2e5eff7428de": sys.exit("Installer checksum mismatch.")
 env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "ZDOTDIR") if k in os.environ}
 subprocess.run(["bash", "-s", "--", *sys.argv[1:]], input=script, env=env, check=True)
 ' install
