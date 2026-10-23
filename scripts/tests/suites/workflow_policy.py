@@ -32,6 +32,8 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             marker = fake / 'forbidden'
+            # Versioned interpreter installs may not provide an adjacent python3.
+            (fake / 'python3').symlink_to(sys.executable)
             for name in ('gh', 'git'):
                 tool = fake / name
                 tool.write_text('#!/bin/sh\n: > "$FORBIDDEN"\nexit 99\n')
