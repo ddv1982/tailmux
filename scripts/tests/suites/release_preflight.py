@@ -244,6 +244,31 @@ class ProtectionTests(unittest.TestCase):
         result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER':raw+' '}, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_reporting_release_waiver_is_separately_bound_and_future_releases_fail(self):
+        request = gate.ReleaseRequest('v0.2.2', SOURCE)
+        waiver = {'schema': 'tailmux-live-only-waiver-v1', 'repository': 'ddv1982/tailmux',
+                  'tag': request.tag, 'source_sha': SOURCE, 'scope': 'live-acceptance-only',
+                  'live_acceptance': 'NOT_VERIFIED', 'operator_id': 82675328,
+                  'reason': 'Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.2 optional Sentry reporting release.'}
+        raw = json.dumps(waiver)
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        self.assertEqual(gate.live_waiver(raw, request), digest)
+        for changes in ({'tag': 'v0.2.1'}, {'source_sha': 'c' * 40}, {'scope': 'all-checks'},
+                        {'reason': 'Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.1 Linux migration patch.'},
+                        {'live_acceptance': 'VERIFIED'}, {'operator_id': 82675328.0}, {'extra': True}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                gate.live_waiver(json.dumps({**waiver, **changes}), request)
+        future = {**waiver, 'tag': 'v0.2.3'}
+        with self.assertRaises(ValueError):
+            gate.live_waiver(json.dumps(future), gate.ReleaseRequest('v0.2.3', SOURCE))
+        command = [sys.executable, str(ROOT / 'scripts/release/acceptance.py'), '--tag', request.tag,
+                   '--source-sha', SOURCE, '--waiver-sha256', digest]
+        result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': raw}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NOT_VERIFIED', result.stdout)
+        result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': raw + ' '}, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_api_failures_are_not_treated_as_empty_success(self):
         with patch.object(gate, 'run', side_effect=subprocess.CalledProcessError(1, ['gh', 'api'])):
             with self.assertRaises(subprocess.CalledProcessError):

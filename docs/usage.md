@@ -21,7 +21,7 @@ Help and version work offline.
 
 ## Optional Sentry error reporting
 
-This feature is available in the source checkout; the published v0.2.1 package does not include it.
+Available in v0.2.2 and later.
 Reporting is off unless you set `TAILMUX_SENTRY_DSN` to your Sentry project's HTTPS DSN.
 It needs curl; a missing curl or failed upload leaves the original error and exit status intact.
 

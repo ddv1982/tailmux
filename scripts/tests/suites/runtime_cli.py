@@ -369,7 +369,7 @@ for path, classname in [(sys.argv[1], "Runtime"), (sys.argv[2], "Lifecycle")]:
         else:
             result = case.run_setup("--version")
         assert result.returncode == 0, result.stderr
-        assert result.stdout == "tailmux 0.2.1\\n", result.stdout
+        assert result.stdout == "tailmux 0.2.2\\n", result.stdout
     finally:
         case.doCleanups()
 '''
