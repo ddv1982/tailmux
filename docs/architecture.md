@@ -4,6 +4,14 @@
 It runs under Bash 3.2 or later and contains its private jq filter.
 It never loads setup modules or shell startup files.
 
+Optional Sentry error reporting is enabled only by `TAILMUX_SENTRY_DSN`.
+The explicit failure handler sends fixed categories for missing dependencies, daemon failures,
+invalid status data, and local I/O failures. It includes a relative source location,
+release, and environment, with no request, device, host, shell environment, or diagnostic text.
+HTTPS delivery through optional curl has a three-second limit and cannot replace the original failure status.
+No reporting traps wrap the transport: `exec tailscale ssh` and its exit/signal behavior remain intact.
+See [monitoring configuration](usage.md#optional-sentry-error-reporting).
+
 | Record | Fields |
 | --- | --- |
 | Request | `connect` or `doctor`, selector, optional user, `tailscale-ssh`, `attach-any` |

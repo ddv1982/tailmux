@@ -10,7 +10,41 @@ usage() {
     'Selectors are known canonical peer names, advertised addresses, or declarative host aliases.' \
     'Only tailscale ssh is supported. No extra options or remote commands are accepted.'
 }
-fail() { printf 'tailmux: %s\n' "$1" >&2; exit "${2:-1}"; }
+report_failure() {
+  local category=$1 line=$2 dsn=${TAILMUX_SENTRY_DSN:-} endpoint event_id environment release
+  # Report only fixed categories, never the diagnostic text or request data.
+  case "$category" in
+    missing-dependency|daemon-unavailable|invalid-schema|local-io) ;;
+    *) return 0 ;;
+  esac
+  local dsn_pattern='^https://[a-fA-F0-9]{32}@([A-Za-z0-9.-]+)/([0-9]+)$'
+  [[ "$dsn" =~ $dsn_pattern ]] || return 0
+  endpoint="https://${BASH_REMATCH[1]}/api/${BASH_REMATCH[2]}/envelope/"
+  command -v curl >/dev/null 2>&1 || return 0
+  environment=${TAILMUX_SENTRY_ENVIRONMENT:-production}
+  release=${TAILMUX_SENTRY_RELEASE:-tailmux@$TAILMUX_VERSION}
+  local environment_pattern='^[A-Za-z0-9_-]{1,64}$' release_pattern='^[A-Za-z0-9@._+-]{1,128}$'
+  [[ "$environment" =~ $environment_pattern && "$release" =~ $release_pattern ]] || return 0
+  printf -v event_id '%04x%04x%04x%04x%04x%04x%04x%04x' \
+    "$RANDOM" "$RANDOM" "$RANDOM" "$RANDOM" "$RANDOM" "$RANDOM" "$RANDOM" "$RANDOM"
+  {
+    printf '{"event_id":"%s","dsn":"%s"}\n' "$event_id" "$dsn"
+    printf '{"type":"event","content_type":"application/json"}\n'
+    printf '{"event_id":"%s","platform":"other","level":"error","release":"%s","environment":"%s",' \
+      "$event_id" "$release" "$environment"
+    printf '"fingerprint":["tailmux","%s"],"tags":{"component":"tailmux-cli","error_category":"%s"},' "$category" "$category"
+    printf '"exception":{"values":[{"type":"TailmuxError","value":"%s",' "$category"
+    printf '"mechanism":{"type":"tailmux","handled":true},"stacktrace":{"frames":['
+    printf '{"filename":"bin/tailmux","function":"main","lineno":%s,"in_app":true}]}}]}}\n' "$line"
+  } | curl -qfsS --proto '=https' --connect-timeout 2 --max-time 3 --retry 0 \
+    --header 'Content-Type: application/x-sentry-envelope' --data-binary @- "$endpoint" >/dev/null 2>&1 || :
+}
+
+fail() {
+  printf 'tailmux: %s\n' "$1" >&2
+  report_failure "${1%%:*}" "${BASH_LINENO[0]}"
+  exit "${2:-1}"
+}
 
 mode=connect
 selector=''

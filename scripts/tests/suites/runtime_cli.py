@@ -15,6 +15,7 @@ from fixture_env import cli_environment
 ROOT = Path(__file__).resolve().parents[3]
 CLIENT = ROOT / 'bin/tailmux'
 FIXTURE = ROOT / 'scripts/tests/fixtures/status-v1.104.2/running.json'
+SENTRY_DSN = 'https://0123456789abcdef0123456789abcdef@o123.ingest.de.sentry.io/456'
 REMOTE = 'if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else printf "%s\\n" "tmux not found on remote" >&2; exit 127; fi'
 
 
@@ -427,6 +428,88 @@ for path, classname in [(sys.argv[1], "Runtime"), (sys.argv[2], "Lifecycle")]:
                 p.kill()
                 p.communicate()
         self.assertFalse(self.forbidden.exists())
+
+
+    def sentry_fixture(self):
+        self.report = self.root / 'report'
+        self.report_args = self.root / 'report-args'
+        self.env.update(REPORT=str(self.report), REPORT_ARGS=str(self.report_args))
+        self.script('curl', '''#!/bin/bash
+printf '%s\\0' "$@" > "$REPORT_ARGS"
+cat > "$REPORT"
+printf 'upload output must stay private\\n'
+printf 'upload error must stay private\\n' >&2
+exit "${REPORT_EXIT:-0}"
+''')
+
+    def test_sentry_is_opt_in_and_does_not_report_success_or_input_errors(self):
+        self.sentry_fixture()
+        self.failure('daemon-unavailable', STATUS_EXIT='37', SENTRY_DSN=SENTRY_DSN)
+        self.assertFalse(self.report.exists())
+        for args in [('--help',), ('--version',), ('work',), ('unknown-device',), ('invalid;selector',)]:
+            self.run_client(*args, TAILMUX_SENTRY_DSN=SENTRY_DSN)
+            self.assertFalse(self.report.exists(), args)
+
+    def test_sentry_payload_excludes_request_and_environment_data(self):
+        self.sentry_fixture()
+        p = self.failure('daemon-unavailable', 'private-user@private-device', STATUS_EXIT='37',
+                         TAILMUX_SENTRY_DSN=SENTRY_DSN, TAILMUX_SENTRY_ENVIRONMENT='development',
+                         TAILMUX_SENTRY_RELEASE='tailmux@test-commit', PRIVATE_TOKEN='do-not-send')
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.stdout, '')
+        self.assertEqual(p.stderr, 'tailmux: daemon-unavailable: tailscale status failed\n')
+        header, item, event = map(json.loads, self.report.read_text().splitlines())
+        self.assertEqual(item['type'], 'event')
+        self.assertEqual(header['dsn'], SENTRY_DSN)
+        self.assertEqual(header['event_id'], event['event_id'])
+        self.assertRegex(event['event_id'], r'^[0-9a-f]{32}$')
+        self.assertEqual(event['release'], 'tailmux@test-commit')
+        self.assertEqual(event['environment'], 'development')
+        exception = event['exception']['values'][0]
+        self.assertEqual(exception['type'], 'TailmuxError')
+        self.assertEqual(exception['value'], 'daemon-unavailable')
+        frame = exception['stacktrace']['frames'][0]
+        self.assertEqual(frame['filename'], 'bin/tailmux')
+        self.assertIn("fail 'daemon-unavailable:", CLIENT.read_text().splitlines()[frame['lineno'] - 1])
+        for private in ('private-user', 'private-device', 'do-not-send', str(self.home), str(self.root), 'tailscale status failed'):
+            self.assertNotIn(private, self.report.read_text())
+        args = self.report_args.read_bytes().split(b'\0')[:-1]
+        self.assertEqual(args[-1], b'https://o123.ingest.de.sentry.io/api/456/envelope/')
+        self.assertEqual(args[args.index(b'--max-time') + 1], b'3')
+        self.assertNotIn(b'-L', args)
+        self.assertEqual(list(self.root.glob('tailmux.*')), [])
+
+    def test_sentry_failure_and_missing_curl_preserve_original_error(self):
+        self.sentry_fixture()
+        p = self.failure('daemon-unavailable', STATUS_EXIT='37', TAILMUX_SENTRY_DSN=SENTRY_DSN, REPORT_EXIT='28')
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.stderr, 'tailmux: daemon-unavailable: tailscale status failed\n')
+        self.assertEqual(p.stdout, '')
+        (self.bin / 'curl').unlink()
+        p = self.failure('daemon-unavailable', STATUS_EXIT='37', TAILMUX_SENTRY_DSN=SENTRY_DSN)
+        self.assertEqual(p.returncode, 1)
+
+    def test_sentry_invalid_configuration_does_not_send(self):
+        self.sentry_fixture()
+        changes = [
+            {'TAILMUX_SENTRY_DSN': SENTRY_DSN.replace('https:', 'http:')},
+            {'TAILMUX_SENTRY_DSN': SENTRY_DSN + '\n'},
+            {'TAILMUX_SENTRY_DSN': SENTRY_DSN + '?query=private'},
+            {'TAILMUX_SENTRY_DSN': SENTRY_DSN + '/extra'},
+            {'TAILMUX_SENTRY_ENVIRONMENT': 'development"injection'},
+            {'TAILMUX_SENTRY_RELEASE': 'release\nprivate'},
+        ]
+        for change in changes:
+            config = {'TAILMUX_SENTRY_DSN': SENTRY_DSN}
+            config.update(change)
+            self.failure('daemon-unavailable', STATUS_EXIT='37', **config)
+            self.assertFalse(self.report.exists(), change)
+
+    def test_sentry_keeps_transport_exit_and_exec_signal_behavior(self):
+        self.sentry_fixture()
+        self.env['TAILMUX_SENTRY_DSN'] = SENTRY_DSN
+        self.test_wrapper_exit_error_and_exec_signal()
+        self.assertFalse(self.report.exists())
 
 
 if __name__ == '__main__':
