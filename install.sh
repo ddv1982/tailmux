@@ -2,8 +2,8 @@
 env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" ZDOTDIR="${ZDOTDIR:-$HOME}" bash -s -- "$@" <<'TAILMUX_INSTALL'
 set -euo pipefail
 umask 077
-tag=v0.2.2
-source_sha=6d3a47f95a89287f432fa3f13abd17c35f5cd4a0
+tag=v0.2.3
+source_sha=0d109df952d45dede3c91647455ca0f6da3c2204
 action=${1:-install}
 if [[ $# -gt 0 ]]; then shift; fi
 fail() { printf 'Tailmux setup rejected: %s\n' "$1" >&2; exit 1; }

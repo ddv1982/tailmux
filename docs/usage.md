@@ -7,7 +7,7 @@ Install the client, prepare the destination once, then connect by device name.
 The verified shell entrypoint in the README accepts `install`, `update`, or `uninstall`.
 It authenticates the pinned release installer and package before running the packaged setup code.
 No GitHub login or repository checkout is required. All three actions need network access and the installer prerequisites listed in the README.
-This entrypoint currently targets v0.2.2. Obtain an updated command from the trusted README when a newer release is available.
+This entrypoint currently targets v0.2.3. Obtain an updated command from the trusted README when a newer release is available.
 
 `install` creates the executable and ownership receipt in `~/.local/bin`.
 Repeating installation of the same version is supported. It refuses to replace a different version; use `update` for that.
