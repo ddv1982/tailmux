@@ -368,22 +368,30 @@ class Acceptance(unittest.TestCase):
             run_gate(changes)
             self.assertTrue(trace.exists())
 
-    def test_terminal_restore_failure_still_reaps_child_and_closes_pty(self):
+    def test_cleanup_survives_late_alarm_and_terminal_restore_failures(self):
         spec = importlib.util.spec_from_file_location('cleanup_smoke', SMOKE)
         smoke = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(smoke)
         signals = (signal.SIGWINCH, signal.SIGTERM, signal.SIGHUP, signal.SIGALRM)
-        for failure in (None, termios.error, OSError):
-            with self.subTest(failure=failure):
-                output = self.root / ('restore-' + (failure.__name__ if failure else 'control'))
+        cases = [(failure, late) for failure in (None, termios.error, OSError)
+                 for late in (None, 'disarm', 'ignore')]
+        cases.append(('initial-io', None))
+        for index, (failure, late) in enumerate(cases):
+            with self.subTest(failure=failure, late_alarm=late):
+                output = self.root / ('cleanup-' + str(index))
                 output.mkdir()
                 master, slave = pty.openpty()
                 saved_input = os.dup(0)
                 os.dup2(slave, 0)
+                terminal_before = termios.tcgetattr(0)
                 handlers = {signum: signal.getsignal(signum) for signum in signals}
                 original_fork = pty.fork
                 original_setattr = termios.tcsetattr
+                original_ioctl = fcntl.ioctl
+                original_timer = signal.setitimer
+                original_signal = signal.signal
                 owned = {}
+                injected = False
 
                 def capture_fork():
                     pid, descriptor = original_fork()
@@ -392,26 +400,57 @@ class Acceptance(unittest.TestCase):
                     return pid, descriptor
 
                 def restore(fd, when, attributes):
-                    if failure is not None and when == termios.TCSANOW:
+                    if failure in (termios.error, OSError) and when == termios.TCSANOW:
                         raise failure(errno.EIO, 'fixture terminal restoration failure')
                     return original_setattr(fd, when, attributes)
 
+                def ioctl(fd, operation, argument):
+                    if failure == 'initial-io' and fd == owned.get('descriptor'):
+                        raise OSError(errno.EIO, 'fixture initial terminal sizing failure')
+                    return original_ioctl(fd, operation, argument)
+
+                def late_alarm():
+                    nonlocal injected
+                    if not injected:
+                        injected = True
+                        original_timer(signal.ITIMER_REAL, 0)
+                        os.kill(os.getpid(), signal.SIGALRM)
+
+                def timer(which, seconds, interval=0):
+                    if late == 'disarm' and which == signal.ITIMER_REAL and seconds == 0:
+                        late_alarm()
+                    return original_timer(which, seconds, interval)
+
+                def handler(signum, value):
+                    if late == 'ignore' and signum == signal.SIGALRM and value == signal.SIG_IGN:
+                        late_alarm()
+                    return original_signal(signum, value)
+
                 try:
                     with patch.object(smoke.pty, 'fork', side_effect=capture_fork), \
-                            patch.object(smoke.termios, 'tcsetattr', side_effect=restore):
+                            patch.object(smoke.termios, 'tcsetattr', side_effect=restore), \
+                            patch.object(smoke.fcntl, 'ioctl', side_effect=ioctl), \
+                            patch.object(smoke.signal, 'setitimer', side_effect=timer), \
+                            patch.object(smoke.signal, 'signal', side_effect=handler):
                         result = smoke.drive(['/bin/sleep', '5'], output, 0.05,
                                              {'PATH': '/usr/bin:/bin', 'TERM': 'xterm'})
                     self.assertEqual(result['outcome'], 'io-error' if failure else 'timeout')
+                    self.assertEqual(injected, late is not None)
                     with self.assertRaises(ChildProcessError):
                         os.waitpid(owned['pid'], os.WNOHANG)
                     with self.assertRaises(OSError):
                         os.fstat(owned['descriptor'])
                     self.assertEqual({signum: signal.getsignal(signum) for signum in signals}, handlers)
                     self.assertEqual(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+                    if failure is None or failure == 'initial-io':
+                        terminal_after = termios.tcgetattr(0)
+                        for attributes in (terminal_before, terminal_after):
+                            attributes[3] &= ~getattr(termios, 'PENDIN', 0)
+                        self.assertEqual(terminal_after, terminal_before)
                 finally:
-                    signal.setitimer(signal.ITIMER_REAL, 0)
-                    for signum, handler in handlers.items():
-                        signal.signal(signum, handler)
+                    original_timer(signal.ITIMER_REAL, 0)
+                    for signum, value in handlers.items():
+                        original_signal(signum, value)
                     if owned:
                         try:
                             os.close(owned['descriptor'])
