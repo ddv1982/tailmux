@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -19,8 +20,10 @@ class SetupScriptTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.script = self.fixture.root / 'install.sh'
-        self.script.write_text((ROOT / 'install.sh').read_text().replace(
-            'd3dbae670a1a9f2429a3db825e91628a7dbb74bc', REQUEST.source_sha).replace('tag=v0.2.0', 'tag=' + REQUEST.tag))
+        script = (ROOT / 'install.sh').read_text()
+        script = re.sub(r'^source_sha=[0-9a-f]{40}$', 'source_sha=' + REQUEST.source_sha, script, flags=re.MULTILINE)
+        script = re.sub(r'^tag=v[^\n]+$', 'tag=' + REQUEST.tag, script, flags=re.MULTILINE)
+        self.script.write_text(script)
         self.binary = self.fixture.home / '.local/bin/tailmux'
         self.rc = self.fixture.home / '.bashrc'
         self.rc.write_bytes(b'# operator-owned\n')
