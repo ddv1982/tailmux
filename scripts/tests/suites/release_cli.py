@@ -19,7 +19,7 @@ spec = importlib.util.spec_from_file_location("release_package", SCRIPT)
 pkg = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = pkg
 spec.loader.exec_module(pkg)
-REQUEST = pkg.ReleaseRequest("v0.2.1", "a" * 40)
+REQUEST = pkg.ReleaseRequest("v0.2.2", "a" * 40)
 FILES = {name: (ROOT / name).read_bytes() if (ROOT / name).is_file() else b"release instructions\n"
          for name in pkg.PAYLOAD}
 
@@ -80,12 +80,12 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(args[:2], ['attestation', 'verify'])
         self.assertEqual(args[3:], ['--hostname', 'github.com', '--repo', 'ddv1982/tailmux', '--signer-workflow',
                                    'ddv1982/tailmux/.github/workflows/release.yml',
-                                   '--signer-digest', 'a' * 40, '--source-ref', 'refs/tags/v0.2.1',
+                                   '--signer-digest', 'a' * 40, '--source-ref', 'refs/tags/v0.2.2',
                                    '--source-digest', 'a' * 40, '--deny-self-hosted-runners', '--format', 'json'])
         help_result = subprocess.run(['bash', str(stage / 'bin/tailmux'), '--help'], capture_output=True)
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         version = subprocess.run(['bash', str(stage / 'bin/tailmux'), '--version'], capture_output=True)
-        self.assertEqual(version.stdout, b'tailmux 0.2.1\n')
+        self.assertEqual(version.stdout, b'tailmux 0.2.2\n')
 
     def test_verifier_failure_precedes_even_gzip_parsing(self):
         result = self.verify(b'not even gzip', result='17')

@@ -42,7 +42,7 @@ MANIFEST = "manifest.json"
 PAYLOAD = (
     "LICENSE", "README.md", "SECURITY.md", "VERSION", "bin/tailmux", "docs/acceptance.md",
     "docs/architecture.md", "docs/compatibility.md", "docs/dependencies.md", "docs/taildrive.md",
-    "docs/releases.md", "docs/troubleshooting.md", "scripts/lib/cli.sh",
+    "docs/releases.md", "docs/troubleshooting.md", "docs/usage.md", "scripts/lib/cli.sh",
     "scripts/lib/install.sh", "scripts/lib/managed_blocks.sh", "scripts/lib/platform.sh",
     "scripts/lib/rc_blocks.sh", "scripts/lib/uninstall.sh", "setup.sh",
 )
