@@ -73,7 +73,9 @@ validate_rc_metadata() {
     rc_error 'RC ACLs are refused; use operator-managed removal' "$rc"; return 1
   fi
   listing="${listing%% *}"
-  if [[ ${#listing} -ne 10 && ! ( "$(uname -s)" == Darwin && "$listing" == ??????????@ ) ]]; then
+  if [[ ${#listing} -ne 10 &&
+    ! ( "$(uname -s)" == Darwin && "$listing" == ??????????@ ) &&
+    ! ( "$(uname -s)" == Linux && "$listing" == ??????????. ) ]]; then
     rc_error 'RC has ACLs or extended metadata; use operator-managed removal' "$rc"; return 1
   fi
   original_bytes="$(wc -c < "$rc")" || return 1
@@ -105,12 +107,11 @@ inspect_rc() {
   LC_ALL=C grep -aFq 'tailmux managed block' "$rc" || scan_status=$?
   [[ "$scan_status" != 1 ]] || return 0
   [[ "$scan_status" == 0 ]] || { rc_error 'Cannot inspect RC bytes' "$rc"; return 1; }
-  if [[ "$(uname -s)" != Darwin ]]; then
-    rc_error 'Automatic legacy RC migration requires macOS metadata verification; remove managed blocks through your dotfiles owner' "$rc"
-    return 1
-  fi
   validate_rc_path "$rc" || return 1
   validate_rc_metadata "$rc" || return 1
+  if [[ "$(uname -s)" != Darwin ]]; then
+    rc_preserved_metadata "$rc" >/dev/null || return 1
+  fi
   exec 3< "$rc" || return 1
   while true; do
     newline=1
@@ -152,13 +153,40 @@ inspect_rc() {
 }
 
 copy_rc_metadata() {
-  cp -p "$1" "$2"
+  if [[ "$(uname -s)" == Darwin ]]; then
+    cp -p "$1" "$2"
+  else
+    cp --preserve=all -- "$1" "$2"
+  fi
 }
 
 rc_preserved_metadata() {
+  local flags
   rc_metadata "$1" | cut -d ' ' -f 1-4 || return 1
   if [[ "$(uname -s)" == Darwin ]]; then
     stat -f '%f' "$1" || return 1
     xattr -lx "$1" || return 1
+  else
+    if ! command -v lsattr >/dev/null || ! command -v python3 >/dev/null; then
+      rc_error 'Linux legacy migration needs lsattr and Python 3 for metadata verification' "$1"; return 1
+    fi
+    flags="$(LC_ALL=C lsattr -d -- "$1")" || {
+      rc_error 'Cannot verify Linux inode flags; remove the legacy block through your dotfiles owner' "$1"; return 1;
+    }
+    flags=${flags%% *}
+    [[ "$flags" =~ ^[-e]+$ ]] || {
+      rc_error 'Unsupported Linux inode flags; remove the legacy block through your dotfiles owner' "$1"; return 1;
+    }
+    printf '%s\n' "$flags"
+    python3 -I -c '
+import hashlib, json, os, sys
+try:
+    path = sys.argv[1]
+    attributes = {name: hashlib.sha256(os.getxattr(path, name, follow_symlinks=False)).hexdigest()
+                  for name in sorted(os.listxattr(path, follow_symlinks=False))}
+    print(json.dumps(attributes, sort_keys=True, ensure_ascii=True))
+except (AttributeError, OSError) as error:
+    sys.exit("Cannot verify Linux extended attributes: " + str(error))
+' "$1" || return 1
   fi
 }

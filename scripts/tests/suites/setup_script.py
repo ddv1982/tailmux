@@ -167,6 +167,11 @@ class SetupScriptTests(unittest.TestCase):
         self.assertIn(b'Usage:', result.stdout)
         self.assertFalse(marker.exists())
         self.assertEqual(self.fixture.events(), [])
+        failed = subprocess.run([*command[:-1], 'invalid-action'], input=payload, env=env,
+                                capture_output=True, timeout=10)
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn(b'Expected install, update, or uninstall', failed.stderr)
+        self.assertNotIn(b'Traceback', failed.stderr)
 
 
 if __name__ == '__main__':

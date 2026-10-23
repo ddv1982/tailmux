@@ -41,7 +41,8 @@ Help and version dispatch before those modules load.
 Installation publishes a staged executable and a three-line path-and-digest receipt, with the receipt published first for interrupted-install recovery.
 The receipt establishes local ownership, not publisher authenticity.
 On macOS, RC migration removes only recognized byte spans after fingerprint, flag, xattr, and metadata checks.
-On Linux, preflight refuses any legacy managed markers before lifecycle writes.
+On Linux, migration uses GNU cp with all-attribute preservation, checks inode flags with lsattr, and compares extended-attribute digests through isolated Python 3.
+Only ordinary inode flags (none or extent format) are supported; other flags and unavailable metadata inspection cause refusal before lifecycle writes.
 Fresh Linux lifecycle operations need no RC migration.
 Unmanaged RC data remains opaque.
 Protected macOS RC backups precede replacement, and content and metadata are checked after publication.

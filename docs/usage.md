@@ -68,7 +68,9 @@ Setup removes only exact fingerprinted legacy core or Taildrive managed blocks f
 Unknown bodies or malformed markers cause refusal. Unmanaged content remains unchanged.
 A symlinked RC containing a managed block needs manual migration through its dotfiles owner.
 On macOS, recognized removal preserves surrounding bytes and supported metadata and saves a protected backup beside the RC.
-On Linux, legacy markers require manual removal before lifecycle operations.
+On Linux, migration checks inode flags and extended attributes and preserves them in the replacement and backup.
+It requires GNU cp, lsattr, and Python 3. Unsupported inode flags or unverifiable metadata need manual migration.
+The published v0.2.0 package predates Linux migration support; its direct install command still requires manual legacy-block removal until a corrected package is released.
 The installer never executes RC contents. Existing shells may retain previously loaded functions.
 
 Taildrive helpers were removed; see [legacy Taildrive migration](taildrive.md).

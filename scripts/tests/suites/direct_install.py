@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -157,6 +158,26 @@ os.execv({sys.executable!r}, [{sys.executable!r}, *args])
             ['verify', 'installer'], ['execute', 'installer'], ['download', 'tailmux-v0.2.0.tar.gz'],
             ['verify', 'package']])
         self.assertFalse(any(event[0] == 'FORBIDDEN' for event in self.events()))
+
+    @unittest.skipUnless(platform.system() == 'Linux', 'native Linux direct migration test')
+    def test_linux_direct_install_migrates_legacy_bashrc(self):
+        before = b'# operator prefix\n'
+        after = b'# operator suffix without newline'
+        legacy = (ROOT / 'scripts/tests/fixtures/legacy-core-pr01.rc').read_bytes()
+        rc = self.home / '.bashrc'
+        rc.write_bytes(before + legacy + after)
+        rc.chmod(0o640)
+        os.setxattr(rc, 'user.tailmux-test', b'preserved by direct install')
+        result = self.bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(rc.read_bytes(), before + after)
+        self.assertEqual(rc.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(os.getxattr(rc, 'user.tailmux-test'), b'preserved by direct install')
+        backups = list(self.home.glob('.tailmux-backup.*/original'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), before + legacy + after)
+        self.assertEqual((self.home / '.local/bin/tailmux').read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        self.assertEqual(list(self.stage.iterdir()), [])
 
     def test_verification_failure_precedes_execution_and_package_failure_precedes_parsing(self):
         self.control['gh_status']['installer'] = 17

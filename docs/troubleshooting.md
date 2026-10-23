@@ -49,9 +49,10 @@ If a symlinked RC contains a legacy managed block, remove that exact block throu
 Unknown bodies or malformed markers require manual inspection.
 Do not delete a block merely because its marker mentions Tailmux.
 
-Automatic legacy RC migration is supported only on macOS.
-On Linux, managed markers cause refusal before any lifecycle writes because this client cannot verify preservation of Linux inode flags and xattrs.
-Remove the legacy block through your dotfiles owner, then retry install or uninstall.
+Automatic legacy RC migration supports macOS and Linux when metadata can be verified.
+Linux needs GNU cp, lsattr, and Python 3. Unsupported inode flags, ACLs, and failed metadata reads still require manual migration.
+The published v0.2.0 package rejects Linux legacy markers; that release requires manual block removal through your dotfiles owner, followed by install or uninstall retry.
+Back up the RC file and remove only the recognized Tailmux marker span; keep unrelated shell content.
 Linux fresh installation and uninstall remain usable when no managed RC block needs changing.
 
 A recognized macOS removal saves `.tailmux-backup.*/original` beside the RC before publication.
