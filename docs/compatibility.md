@@ -12,7 +12,7 @@ Every row below is NOT VERIFIED. Hosted runner tests establish offline tooling b
 A reachable ordinary macOS sshd does not establish Tailscale SSH server support.
 Upstream supports the server on Linux and the macOS open-source CLI variant. See [Tailscale SSH prerequisites](https://tailscale.com/docs/features/tailscale-ssh).
 That upstream capability does not establish Tailmux acceptance for this row.
-The acceptance validator still requires all three pairs. The separate publisher selector permits an explicit live-only waiver for v0.2.0 at one independently expected source. It leaves these rows NOT VERIFIED and waives no authentication, source, CI, or code-review requirement.
+The acceptance validator still requires all three pairs. The separate publisher selector permits separate explicit live-only waivers for v0.2.0 and v0.2.1, each bound to its own exact tag and independently expected source. A new release needs its own owner authorization; the v0.2.0 waiver does not authorize v0.2.1. It leaves these rows NOT VERIFIED and waives no authentication, source, CI, or code-review requirement.
 
 App Store and TestFlight Tailscale builds without `tailscale ssh` are incompatible with the selected transport.
 Tailmux must report this limitation. It must not replace the app, weaken host-key checks, or fall back to raw SSH.

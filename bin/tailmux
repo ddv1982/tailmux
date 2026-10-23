@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 export LC_ALL=C
-readonly TAILMUX_VERSION=0.2.0
+readonly TAILMUX_VERSION=0.2.1
 
 usage() {
   printf '%s\n' "tailmux $TAILMUX_VERSION" \

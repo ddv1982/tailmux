@@ -31,7 +31,7 @@ def api(endpoint, pages=False):
     return json.loads(data, object_pairs_hook=strict_object)
 
 
-def validate_environment(environment, policy_pages, name):
+def validate_environment(environment, policy_pages, name, tag="v0.2.0"):
     require(type(environment) is dict and environment.get("name") == name
             and type(environment.get("id")) is int and environment["id"] > 0,
             "Required release environment does not exist")
@@ -58,9 +58,9 @@ def validate_environment(environment, policy_pages, name):
                 and type(page.get("total_count")) is int and page["total_count"] == 1, "Exactly one deployment restriction required")
         policies.extend(page["branch_policies"])
     require(len(policies) == 1 and type(policies[0]) is dict
-            and policies[0].get("name") == "v0.2.0" and policies[0].get("type") == "tag"
+            and policies[0].get("name") == tag and policies[0].get("type") == "tag"
             and type(policies[0].get("id")) is int and policies[0]["id"] > 0,
-            "Only the v0.2.0 tag deployment restriction is accepted")
+            "Only the exact requested tag deployment restriction is accepted")
 
 
 def validate_main(branch, rule_pages):
@@ -192,14 +192,19 @@ def live_waiver(raw, request):
     encoded = raw.encode("utf-8")
     require(len(encoded) <= 4096, "Live-only waiver exceeds limit")
     if raw:
+        reasons = {
+            "v0.2.0": "User explicitly requested stable 0.2.0 without waiting for the live test.",
+            "v0.2.1": "Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.1 Linux migration patch.",
+        }
+        require(request.tag in reasons, "Live-only waivers are limited to v0.2.0 and v0.2.1")
         expected = {"schema": "tailmux-live-only-waiver-v1", "repository": REPOSITORY,
-                    "tag": "v0.2.0", "source_sha": request.source_sha, "scope": "live-acceptance-only",
+                    "tag": request.tag, "source_sha": request.source_sha, "scope": "live-acceptance-only",
                     "live_acceptance": "NOT_VERIFIED", "operator_id": 82675328,
-                    "reason": "User explicitly requested stable 0.2.0 without waiting for the live test."}
+                    "reason": reasons[request.tag]}
         actual = json.loads(raw, object_pairs_hook=strict_object)
-        require(request.tag == "v0.2.0" and type(actual) is dict and actual == expected
+        require(type(actual) is dict and actual == expected
                 and all(type(actual[key]) is type(value) for key, value in expected.items()),
-                "Only the exact-source v0.2.0 live-only waiver is accepted")
+                "Only the exact-source and exact-tag live-only waiver is accepted")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -223,7 +228,7 @@ def preflight(request, root, environment, expected_main=None):
     identity(request, root)
     validate_environment(api(f"environments/{environment}"),
                          api(f"environments/{environment}/deployment-branch-policies?per_page=100", True),
-                         environment)
+                         environment, request.tag)
     main_sha = validate_main(api("branches/main"), api("rules/branches/main?per_page=100", True))
     if expected_main is not None:
         require(main_sha == expected_main, "Reviewed main changed since preflight")

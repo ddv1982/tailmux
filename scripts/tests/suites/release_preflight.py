@@ -69,6 +69,11 @@ class ProtectionTests(unittest.TestCase):
         self.assertEqual(gate.validate_main(BRANCH, RULES), MAIN)
         other = {**ENVIRONMENT, 'name': 'release-acceptance'}
         gate.validate_environment(other, POLICIES, 'release-acceptance')
+        patch_policies = copy.deepcopy(POLICIES)
+        patch_policies[0]['branch_policies'][0]['name'] = 'v0.2.1'
+        gate.validate_environment(ENVIRONMENT, patch_policies, 'release', 'v0.2.1')
+        with self.assertRaises(ValueError):
+            gate.validate_environment(ENVIRONMENT, POLICIES, 'release', 'v0.2.1')
 
     def test_environment_missing_fields_and_unsafe_rules_rejected(self):
         cases = [None, {}, {**ENVIRONMENT, 'name': 'wrong'}, {**ENVIRONMENT, 'id': None}]
@@ -215,6 +220,30 @@ class ProtectionTests(unittest.TestCase):
             with patch.dict(os.environ, IDENTITY, clear=True), patch.object(gate, 'git', side_effect=values), self.assertRaises(ValueError):
                 gate.identity(request, ROOT)
 
+    def test_patch_waiver_requires_its_own_tag_source_reason_and_captured_digest(self):
+        request = gate.ReleaseRequest('v0.2.1', SOURCE)
+        waiver = {'schema': 'tailmux-live-only-waiver-v1', 'repository': 'ddv1982/tailmux',
+                  'tag': request.tag, 'source_sha': SOURCE, 'scope': 'live-acceptance-only',
+                  'live_acceptance': 'NOT_VERIFIED', 'operator_id': 82675328,
+                  'reason': 'Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.1 Linux migration patch.'}
+        raw = json.dumps(waiver)
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        self.assertEqual(gate.live_waiver(raw, request), digest)
+        for changes in ({'tag':'v0.2.0'}, {'source_sha':'c'*40}, {'scope':'all-checks'},
+                        {'reason':'User explicitly requested stable 0.2.0 without waiting for the live test.'},
+                        {'live_acceptance':'VERIFIED'}, {'extra':True}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                gate.live_waiver(json.dumps({**waiver, **changes}), request)
+        with self.assertRaises(ValueError):
+            gate.live_waiver(raw, gate.ReleaseRequest('v0.2.2', SOURCE))
+        command = [sys.executable, str(ROOT / 'scripts/release/acceptance.py'), '--tag', request.tag,
+                   '--source-sha', SOURCE, '--waiver-sha256', digest]
+        result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER':raw}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NOT_VERIFIED', result.stdout)
+        result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER':raw+' '}, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_api_failures_are_not_treated_as_empty_success(self):
         with patch.object(gate, 'run', side_effect=subprocess.CalledProcessError(1, ['gh', 'api'])):
             with self.assertRaises(subprocess.CalledProcessError):
@@ -232,6 +261,8 @@ class ProtectionTests(unittest.TestCase):
                 'branches/main': BRANCH, 'rules/branches/main?per_page=100': RULES,
                 **policy_fixtures(),
             }
+            fixture['environments/release/deployment-branch-policies?per_page=100'] = copy.deepcopy(POLICIES)
+            fixture['environments/release/deployment-branch-policies?per_page=100'][0]['branch_policies'][0]['name'] = 'v1.2.3'
             (directory / 'responses.json').write_text(json.dumps(fixture))
             (directory / 'gh').write_text('#!/usr/bin/env python3\nimport json, os, sys\n'
                 "sys.exit(9) if os.environ.get('FAIL_API') else None\n"

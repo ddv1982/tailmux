@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TAILMUX_VERSION=0.2.0
+TAILMUX_VERSION=0.2.1
 
 setup_help() {
   printf '%s\n' "tailmux setup $TAILMUX_VERSION" '' \
