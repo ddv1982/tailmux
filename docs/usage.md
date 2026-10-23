@@ -19,6 +19,32 @@ Extra options, remote commands, session names, and SSH flags are rejected.
 Run `tailmux doctor` for local dependency diagnostics, or `tailmux doctor device-name` to check selection without connecting.
 Help and version work offline.
 
+## Optional Sentry error reporting
+
+This feature is available in the source checkout; the published v0.2.1 package does not include it.
+Reporting is off unless you set `TAILMUX_SENTRY_DSN` to your Sentry project's HTTPS DSN.
+It needs curl; a missing curl or failed upload leaves the original error and exit status intact.
+
+```bash
+export TAILMUX_SENTRY_DSN='https://YOUR_PUBLIC_KEY@YOUR_INGEST_HOST/YOUR_PROJECT_ID'
+export TAILMUX_SENTRY_ENVIRONMENT=production
+```
+
+Use a public 32-character hexadecimal key, DNS ingest host, and numeric project ID, as in a Sentry Cloud DSN.
+For local testing, set `TAILMUX_SENTRY_ENVIRONMENT=development`.
+Reports use `tailmux@<version>` as the release; source builds can set `TAILMUX_SENTRY_RELEASE=tailmux@<commit>`.
+Environment names accept letters, numbers, underscores, and hyphens (up to 64 characters).
+Release names also accept `@`, `.`, and `+` (up to 128 characters).
+An unsupported DSN, environment, or release disables reporting for that invocation.
+
+Only dependency, daemon, status-validation, and local I/O failures are reported.
+Events contain a fixed error category, a relative source location, release, and environment.
+They exclude selectors, device names, addresses, usernames, aliases, status snapshots, diagnostic text, and shell environment values.
+Sentry still receives the network request's source IP; configure server-side scrubbing if you need that removed.
+User-input errors, normal connection exits, and failures inside Tailscale SSH or remote tmux are not captured.
+Each report can delay failure exit by up to three seconds. There is no retry queue or performance tracing.
+Disable reporting with `unset TAILMUX_SENTRY_DSN`.
+
 ## Aliases
 
 Create `~/.config/tailmux/hosts` with one alias and full canonical device name per line:
