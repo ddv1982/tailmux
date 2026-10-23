@@ -104,6 +104,9 @@ fetch "$archive" 8388608
 verified=$(python3 -I "$private/$asset" verify "$private/$archive" \
   --tag "$tag" --source-sha "$source_sha" --bundle "$private/$bundle" --output-parent "$private")
 if [[ $action == update ]]; then
+  if [[ -e "$prefix/tailmux" || -L "$prefix/tailmux" ]]; then
+    [[ -f "$prefix/tailmux" && ! -L "$prefix/tailmux" ]] || fail 'Existing client must be a regular, non-symlinked file.'
+  fi
   if [[ -e "$prefix/tailmux" || -L "$prefix/tailmux" || -e "$prefix/.tailmux-receipt" || -L "$prefix/.tailmux-receipt" ]] &&
      ! cmp -s "$prefix/tailmux" "$verified/bin/tailmux"; then
     bash "$verified/setup.sh" uninstall --prefix "$prefix"

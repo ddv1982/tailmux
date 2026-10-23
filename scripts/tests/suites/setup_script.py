@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import hashlib
+import os
 import shlex
+import signal
 import subprocess
 import sys
 import unittest
@@ -23,11 +25,18 @@ class SetupScriptTests(unittest.TestCase):
         self.rc = self.fixture.home / '.bashrc'
         self.rc.write_bytes(b'# operator-owned\n')
 
-    def run_script(self, *args):
+    def run_script(self, *args, timeout=30):
         self.fixture.save()
-        result = subprocess.run(['/bin/bash', str(self.script), *args],
-                                env=self.fixture.environment, capture_output=True,
-                                text=True, timeout=30)
+        command = ['/bin/bash', str(self.script), *args]
+        with subprocess.Popen(command, env=self.fixture.environment, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+                self.fail('Setup did not finish within ' + str(timeout) + ' seconds')
+            result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         self.assertFalse(any(e[0] == 'FORBIDDEN' for e in self.fixture.events()))
         self.assertEqual(list(self.fixture.stage.iterdir()), [])
         self.assertEqual(self.rc.read_bytes(), b'# operator-owned\n')
@@ -88,6 +97,35 @@ class SetupScriptTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.binary.read_bytes(), b'foreign replacement\n')
                 self.assertEqual(list(self.binary.parent.glob('.tailmux-backup.*')), [])
+
+    def test_update_refuses_fifos_and_symlinks_without_blocking_or_modifying_them(self):
+        self.binary.parent.mkdir(parents=True)
+        fifo = self.fixture.root / 'foreign-fifo'
+        os.mkfifo(fifo)
+        regular = self.fixture.root / 'foreign-file'
+        regular.write_bytes(b'foreign target\n')
+        for kind in ('fifo', 'fifo-symlink', 'file-symlink', 'broken-symlink', 'directory'):
+            with self.subTest(kind=kind):
+                if kind == 'fifo':
+                    os.mkfifo(self.binary)
+                elif kind.endswith('symlink'):
+                    target = fifo if kind == 'fifo-symlink' else regular if kind == 'file-symlink' else self.fixture.root / 'missing'
+                    self.binary.symlink_to(target)
+                else:
+                    self.binary.mkdir()
+                before = self.binary.lstat()
+                result = self.run_script('update', timeout=3)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('regular, non-symlinked', result.stderr)
+                after = self.binary.lstat()
+                self.assertEqual((after.st_ino, after.st_mode), (before.st_ino, before.st_mode))
+                self.assertEqual(regular.read_bytes(), b'foreign target\n')
+                self.assertFalse((self.binary.parent / '.tailmux-receipt').exists())
+                self.assertEqual(list(self.binary.parent.glob('.tailmux-backup.*')), [])
+                if kind == 'directory':
+                    self.binary.rmdir()
+                else:
+                    self.binary.unlink()
 
     def test_custom_prefix_and_offline_help(self):
         prefix = self.fixture.home / 'custom bin'
