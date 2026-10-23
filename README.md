@@ -16,7 +16,7 @@ python3 -I -c 'import hashlib, os, subprocess, sys
 script = sys.stdin.buffer.read(65537)
 if hashlib.sha256(script).hexdigest() != "7c2a2f13a9eec8a37c95cfdf1667838dd901682d17655d6b144a2e5eff7428de": sys.exit("Installer checksum mismatch.")
 env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "ZDOTDIR") if k in os.environ}
-subprocess.run(["bash", "-s", "--", *sys.argv[1:]], input=script, env=env, check=True)
+sys.exit(subprocess.run(["bash", "-s", "--", *sys.argv[1:]], input=script, env=env).returncode)
 ' install
 ```
 

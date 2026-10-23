@@ -32,7 +32,7 @@ class Lifecycle(unittest.TestCase):
         self.bin.mkdir()
         self.prefix = self.home / '.local/bin'
         self.trace = self.root / 'forbidden'
-        for name in ('bash dirname uname stat ls tr cmp shasum sha256sum dd cat mkdir rmdir mktemp cp mv rm cut xattr wc grep chmod').split():
+        for name in ('bash dirname uname stat ls tr cmp shasum sha256sum dd cat mkdir rmdir mktemp cp mv rm cut xattr wc grep chmod lsattr python3').split():
             tool = shutil.which(name)
             if tool:
                 (self.bin / name).symlink_to(tool)
@@ -150,7 +150,6 @@ esac
             self.success('uninstall')
             self.assertEqual(self.rc.read_bytes(), body)
 
-    @unittest.skipUnless(platform.system() == 'Darwin', 'automatic legacy migration is macOS-only')
     def test_all_known_blocks_and_missing_final_newline(self):
         for fixture in sorted(FIXTURES.glob('legacy-*.rc')):
             with self.subTest(fixture=fixture.name):
@@ -207,7 +206,7 @@ esac
         self.assertTrue(self.rc.is_symlink())
         target.write_bytes((FIXTURES / 'legacy-core-pr01.rc').read_bytes())
         for operation in ('install', 'uninstall'):
-            self.refusal(operation, contains='Symlinked RC paths' if platform.system() == 'Darwin' else 'requires macOS metadata verification')
+            self.refusal(operation, contains='Symlinked RC paths')
             self.assertTrue(self.rc.is_symlink())
         self.rc.unlink()
         binary.symlink_to(target)
@@ -278,7 +277,6 @@ exec "''' + real_mv + '''" "$@"
         self.success('install')
         self.success('uninstall')
 
-    @unittest.skipUnless(platform.system() == 'Darwin', 'automatic legacy migration is macOS-only')
     def test_write_failures_and_rc_backup_truth(self):
         core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
         self.rc.write_bytes(core)
@@ -310,7 +308,7 @@ exec "''' + real_mv + '''" "$@"
         self.assertFalse((self.prefix / '.tailmux-receipt').exists())
 
     def test_environment_prefix_spaces_and_all_rc_locations(self):
-        core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes() if platform.system() == 'Darwin' else b'# unmanaged RC\n'
+        core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
         self.rc.write_bytes(core)
         for variable in ('HOME', 'ZDOTDIR'):
             for value in ('relative path', str(self.home) + '\n' + str(self.root)):
@@ -327,7 +325,7 @@ exec "''' + real_mv + '''" "$@"
         prefix = self.home / 'bin space'
         self.success('install', '--prefix', str(prefix), ZDOTDIR=str(zsh))
         for path in [self.rc, self.home / '.bashrc', self.home / '.bash_profile', zsh / '.zshrc']:
-            self.assertEqual(path.read_bytes(), b'' if platform.system() == 'Darwin' else core)
+            self.assertEqual(path.read_bytes(), b'')
         self.success('uninstall', '--prefix', str(prefix), ZDOTDIR=str(zsh))
         for invalid in ('', 'relative', '/', str(prefix) + '/../bin', str(prefix) + '\nother'):
             self.refusal('install', '--prefix', invalid)
@@ -336,7 +334,6 @@ exec "''' + real_mv + '''" "$@"
         self.success('install', HOME=str(home_space), ZDOTDIR=str(home_space))
         self.success('uninstall', HOME=str(home_space), ZDOTDIR=str(home_space))
 
-    @unittest.skipUnless(platform.system() == 'Darwin', 'automatic legacy migration is macOS-only')
     def test_permissions_hardlinks_and_ancestor_modes(self):
         core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
         self.rc.write_bytes(core)
@@ -356,51 +353,51 @@ exec "''' + real_mv + '''" "$@"
         self.rc.chmod(0o644)
         self.assertEqual(self.rc.read_bytes(), core)
 
-    def test_linux_branch_refuses_legacy_before_lifecycle_writes(self):
-        self.script('uname', '#!/bin/bash\nprintf "%s\\n" Linux\n')
-        if platform.system() == 'Darwin':
-            self.script('stat', '''#!/bin/bash
-[[ "$1" == -c ]] || exit 98
-exec /usr/bin/stat -f '%u %g %p %l %i %m %c %z' "$3"
-''')
-            self.script('ls', '''#!/bin/bash
-listing="$(/bin/ls "$@")" || exit 98
-permissions=${listing%% *}
-if [[ "$permissions" == ??????????@ ]]; then
-  listing="${listing:0:10}${listing:11}"
-fi
-printf '%s\\n' "$listing"
-''')
-        original = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
-        for body in (original, original.replace(b'tmux attach', b'tmux CHANGED'),
-                     b'# >>> tailmux managed block (unknown) >>>\n'):
-            self.rc.write_bytes(body)
-            before = self.tree()
-            for operation in ('install', 'uninstall'):
-                self.refusal(operation, contains='requires macOS metadata verification')
-                self.assertEqual(self.rc.read_bytes(), body)
-                self.assertEqual(self.tree(), before)
-        self.rc.write_bytes(b'# unmanaged Linux control\n')
-        self.success('install')
-        binary = self.prefix / 'tailmux'
-        receipt = self.prefix / '.tailmux-receipt'
-        installed = binary.read_bytes()
-        receipt_bytes = receipt.read_bytes()
+    @unittest.skipUnless(platform.system() == 'Linux', 'native Linux metadata test')
+    def test_linux_legacy_migration_preserves_xattrs_and_backup(self):
+        core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
+        original = b'# before\n' + core + b'# after without newline'
         self.rc.write_bytes(original)
-        before = self.tree()
-        for operation in ('install', 'uninstall'):
-            self.refusal(operation, contains='requires macOS metadata verification')
-            self.assertEqual(self.tree(), before)
-            self.assertEqual(binary.read_bytes(), installed)
-            self.assertEqual(receipt.read_bytes(), receipt_bytes)
-            self.assertEqual(self.rc.read_bytes(), original)
-        self.rc.write_bytes(b'# unmanaged Linux control\n')
-        p = subprocess.run([str(binary), '--version'], env=cli_environment(self.bin, self.env),
-                           capture_output=True, text=True)
-        self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.0\n'))
+        self.rc.chmod(0o640)
+        os.setxattr(self.rc, 'user.tailmux-test', b'opaque\x00metadata')
+        before = self.rc.stat()
+        self.success('install')
+        self.assertEqual(self.rc.read_bytes(), b'# before\n# after without newline')
+        self.assertEqual(os.getxattr(self.rc, 'user.tailmux-test'), b'opaque\x00metadata')
+        after = self.rc.stat()
+        self.assertEqual((after.st_uid, after.st_gid, after.st_mode),
+                         (before.st_uid, before.st_gid, before.st_mode))
+        backups = list(self.home.glob('.tailmux-backup.*/original'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertEqual(os.getxattr(backups[0], 'user.tailmux-test'), b'opaque\x00metadata')
         self.success('uninstall')
-        self.assertFalse(binary.exists())
-        self.assertEqual(self.rc.read_bytes(), b'# unmanaged Linux control\n')
+        self.assertEqual(self.rc.read_bytes(), b'# before\n# after without newline')
+
+    @unittest.skipUnless(platform.system() == 'Linux', 'native Linux metadata test')
+    def test_linux_unverified_inode_flags_refuse_before_lifecycle_writes(self):
+        core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
+        self.rc.write_bytes(core)
+        for code, message in [("printf '%s\\n' '----i------------- file'", 'Unsupported Linux inode flags'),
+                              ('exit 73', 'Cannot verify Linux inode flags')]:
+            self.script('lsattr', '#!/bin/bash\n' + code + '\n')
+            before = self.tree()
+            for action in ('install', 'uninstall'):
+                self.refusal(action, contains=message)
+                self.assertEqual(self.rc.read_bytes(), core)
+                self.assertEqual(self.tree(), before)
+
+    @unittest.skipUnless(platform.system() == 'Linux', 'native Linux metadata test')
+    def test_linux_dropped_xattrs_refuse_rc_replacement(self):
+        core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
+        self.rc.write_bytes(core)
+        os.setxattr(self.rc, 'user.tailmux-test', b'preserve me')
+        real_cp = shutil.which('cp')
+        self.script('cp', '#!/bin/bash\nexec "' + real_cp + '" -p -- "${@: -2}"\n')
+        self.refusal('install', contains='RC metadata could not be preserved')
+        self.assertEqual(self.rc.read_bytes(), core)
+        self.assertEqual(os.getxattr(self.rc, 'user.tailmux-test'), b'preserve me')
+        self.assertEqual(list(self.home.glob('.tailmux-backup.*/original')), [])
 
     @unittest.skipUnless(platform.system() == 'Darwin', 'macOS metadata evidence only')
     def test_macos_xattrs_flags_and_ancestor_acls(self):
