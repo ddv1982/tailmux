@@ -46,7 +46,7 @@ The local OpenSSH client still runs the SSH protocol. You do not need a separate
 
 First, install and sign in to Tailscale on both devices. On the destination:
 
-1. Install tmux through your package manager. Run `tmux -V` as the account you plan to use to confirm that tmux is on its PATH.
+1. Install tmux through your package manager. It must be on the PATH used by remote SSH commands, which can differ from your interactive shell.
 2. Enable Tailscale SSH from the device's local terminal. This can interrupt existing SSH sessions over Tailscale.
 
    ```bash
@@ -59,6 +59,7 @@ First, install and sign in to Tailscale on both devices. On the destination:
 Tailscale SSH server support is available on Linux and the macOS open-source CLI variant.
 Check [platform and macOS build requirements](compatibility.md) before using a Mac as the client or destination.
 Tailmux installation does not configure destination access or install tmux.
+If tmux works locally but Tailmux cannot find it, [check the remote command PATH](troubleshooting.md#resolve-tmux-not-found-on-remote).
 
 ## Connect and resume a session
 

@@ -35,7 +35,20 @@ The App Store and TestFlight Tailscale variants do not expose `tailscale ssh`.
 Tailmux propagates that wrapper error and does not replace the app or retry with ordinary SSH.
 Wrapper errors, remote exit codes, and policy failures propagate through `exec`.
 A remote account without tmux exits 127.
-Configure tmux discovery in the remote account's PATH.
+See [remote tmux discovery](#resolve-tmux-not-found-on-remote).
+
+## Resolve tmux not found on remote
+
+A local `tmux -V` check on the destination does not prove that an SSH command can find tmux.
+After Tailscale SSH setup, run this from your client with the intended destination account:
+
+```bash
+tailscale ssh user@device-name -t 'printf "%s\n" "$PATH"; command -v tmux && tmux -V'
+```
+
+The output should include the remote PATH, tmux executable path, and version.
+If tmux is missing, install it in a directory on that remote PATH or configure the destination's SSH command environment to include its directory.
+An alias or PATH setting loaded only by an interactive shell is insufficient.
 
 ## Resolve missing-advertised-host-keys
 
