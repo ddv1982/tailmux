@@ -1,8 +1,10 @@
 # Verify and prepare a release
 
-Tailmux supports a no-checkout direct installer for macOS and Linux. The published install block pins one version, an independently reviewed full source commit, the signing workflow, and certificate publisher IDs. Obtain that block through a channel you trust. Its literals are the first trust boundary. A compromised command distribution channel can replace those expectations.
+Tailmux supports a no-checkout direct installer for macOS and Linux. The README's short command downloads `install.sh` from an exact commit and checks its independently pinned SHA-256 before passing the verified bytes to Bash. Obtain that command through a channel you trust. Its literals are the first trust boundary. A compromised command distribution channel can replace those expectations.
 
-The release-source checkout cannot contain its own commit SHA. This source therefore documents the protocol and supports local checkout installation. After the reviewed source S exists, the maintainer generates the literal command and adds it in a documentation-only descendant D. The release tag, installer, archive, and workflow remain at S. There is no runnable placeholder command in this source README.
+The shell entrypoint pins v0.2.0, reviewed release source `d3dbae670a1a9f2429a3db825e91628a7dbb74bc`, the signing workflow, and certificate publisher IDs. It is distributed in a later commit; the release tag and signed assets remain at the original source. A subsequent README commit pins the shell entrypoint's exact commit and digest, so neither the script nor the release needs to contain its own future commit SHA.
+
+The short command bounds HTTPS downloads and hashes the complete script in memory before any downloaded shell code runs. Python runs in isolated mode and launches Bash with only PATH, HOME, optional TMPDIR, and optional ZDOTDIR. The shell entrypoint then applies the private-staging and standard attestation checks below. It accepts install, update, and uninstall actions, plus an optional absolute prefix. All actions authenticate and validate the package before invoking its existing lifecycle writer. Update removes a different owned client only after the replacement passes authentication; removal retains a protected backup. The entrypoint currently selects v0.2.0 rather than discovering a mutable latest release.
 
 ## Install from authenticated release assets
 
