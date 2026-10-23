@@ -73,7 +73,9 @@ validate_rc_metadata() {
     rc_error 'RC ACLs are refused; use operator-managed removal' "$rc"; return 1
   fi
   listing="${listing%% *}"
-  if [[ ${#listing} -ne 10 && ! ( "$(uname -s)" == Darwin && "$listing" == ??????????@ ) ]]; then
+  if [[ ${#listing} -ne 10 &&
+    ! ( "$(uname -s)" == Darwin && "$listing" == ??????????@ ) &&
+    ! ( "$(uname -s)" == Linux && "$listing" == ??????????. ) ]]; then
     rc_error 'RC has ACLs or extended metadata; use operator-managed removal' "$rc"; return 1
   fi
   original_bytes="$(wc -c < "$rc")" || return 1

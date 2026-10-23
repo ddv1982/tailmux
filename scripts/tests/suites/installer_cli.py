@@ -375,6 +375,32 @@ exec "''' + real_mv + '''" "$@"
         self.assertEqual(self.rc.read_bytes(), b'# before\n# after without newline')
 
     @unittest.skipUnless(platform.system() == 'Linux', 'native Linux metadata test')
+    def test_linux_security_context_mode_indicator_is_accepted_but_acls_are_refused(self):
+        core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
+        self.rc.write_bytes(core)
+        os.setxattr(self.rc, 'user.context-sentinel', b'preserved context data')
+        real_ls = shutil.which('ls')
+        def indicator(suffix):
+            self.script('ls', '#!/bin/bash\nlisting="$("' + real_ls + '" "$@")" || exit $?\n'
+                        'permissions=${listing%% *}\nif [[ $permissions == -* ]]; then\n'
+                        'printf \'%s' + suffix + '%s\\n\' "$permissions" "${listing#"$permissions"}"\n'
+                        'else printf \'%s\\n\' "$listing"; fi\n')
+        indicator('.')
+        self.success('install')
+        self.assertEqual(self.rc.read_bytes(), b'')
+        self.assertEqual(os.getxattr(self.rc, 'user.context-sentinel'), b'preserved context data')
+        backups = list(self.home.glob('.tailmux-backup.*/original'))
+        self.assertEqual(backups[0].read_bytes(), core)
+        self.assertEqual(os.getxattr(backups[0], 'user.context-sentinel'), b'preserved context data')
+        self.success('uninstall')
+        self.rc.write_bytes(core)
+        indicator('+')
+        before = self.tree()
+        self.refusal('install', contains='RC has ACLs or extended metadata')
+        self.assertEqual(self.rc.read_bytes(), core)
+        self.assertEqual(self.tree(), before)
+
+    @unittest.skipUnless(platform.system() == 'Linux', 'native Linux metadata test')
     def test_linux_unverified_inode_flags_refuse_before_lifecycle_writes(self):
         core = (FIXTURES / 'legacy-core-pr01.rc').read_bytes()
         self.rc.write_bytes(core)
