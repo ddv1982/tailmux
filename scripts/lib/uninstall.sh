@@ -1,11 +1,10 @@
 # shellcheck shell=bash
 do_uninstall() (
-  local lock backup
-  preflight_lifecycle || return 1
+  local id=".tailmux-tx.$$.$RANDOM" backup
+  require_installation && preflight_lifecycle || return 1
   if [[ -f "$TAILMUX_PREFIX/.tailmux-receipt" ]]; then
-    lock="$TAILMUX_PREFIX/.tailmux-install-lock"
-    (umask 077; mkdir "$lock") || { rc_error 'Installation lifecycle is locked; inspect before retrying' "$TAILMUX_PREFIX"; return 1; }
-    trap 'rmdir "$lock"' EXIT
+    lifecycle_lock "$TAILMUX_PREFIX" "$id" || return 1
+    trap 'lifecycle_unlock "$TAILMUX_PREFIX" "$id"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     preflight_lifecycle || return 1
