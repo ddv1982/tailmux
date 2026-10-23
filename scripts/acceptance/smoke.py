@@ -38,7 +38,7 @@ def drive(argv, output, timeout, env):
     saved = termios.tcgetattr(0)
     size = fcntl.ioctl(0, termios.TIOCGWINSZ, b'\0' * 8)
     events = []
-    previous = {}
+    previous = {signal.SIGALRM: signal.getsignal(signal.SIGALRM)}
     pid, master = pty.fork()
     if pid == 0:
         try:
@@ -101,6 +101,10 @@ def drive(argv, output, timeout, env):
     except (OSError, termios.error):
         outcome = 'io-error'
     finally:
+        try:
+            signal.signal(signal.SIGALRM, signal.SIG_IGN)
+        except TimeoutError:
+            signal.signal(signal.SIGALRM, signal.SIG_IGN)
         signal.setitimer(signal.ITIMER_REAL, 0)
         try:
             termios.tcsetattr(0, termios.TCSANOW, saved)
