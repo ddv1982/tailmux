@@ -3,9 +3,17 @@
 Resume tmux sessions on your Tailscale devices with one command.
 Tailmux connects through Tailscale SSH, attaches to an existing session, or creates one.
 
+## Before you start
+
+- On your Mac or Linux client, use Bash 3.2+, jq, OpenSSH, and a running Tailscale client that supports `tailscale ssh`.
+- On the destination, install tmux and [enable Tailscale SSH and access](docs/usage.md#prepare-the-destination).
+
+Tailscale SSH opens an SSH terminal over your private Tailscale network. Tailscale manages identity and access.
+See [macOS build requirements](docs/compatibility.md) if you use the App Store or TestFlight app.
+
 ## Install, update, or uninstall
 
-Supports macOS and Linux. Install trusted Python 3.11+, gh 2.103.0+, jq, and curl 8.4.0+ first.
+The installer needs trusted Python 3.11+, gh 2.103.0+, jq, and curl 8.4.0+.
 Run this as your normal user to install [v0.2.2](https://github.com/ddv1982/tailmux/releases/tag/v0.2.2):
 
 ```bash
@@ -24,19 +32,20 @@ For updates or removal, replace `install` on the last line with `update` or `uni
 All three actions use the same [shell script](install.sh) and verify the signed release package. No GitHub login is needed.
 Updates currently target v0.2.2; use the updated README command when a newer release is published.
 
-The client is installed at `~/.local/bin/tailmux`. Setup preserves your dependencies and unmanaged shell configuration.
+The client is installed at `~/.local/bin/tailmux`. Setup adds no PATH entry or shell code.
 See [installation options and migration](docs/usage.md#install-update-and-uninstall) for custom paths, local setup, and backups.
 
 ## Connect
 
-Use your device's Tailscale name:
+Check local dependencies, then connect using your destination's Tailscale name:
 
 ```bash
+"$HOME/.local/bin/tailmux" doctor
 "$HOME/.local/bin/tailmux" device-name
 ```
 
-The destination needs tmux, Tailscale SSH enabled, and policy permission.
-Run `tailmux doctor` to check local dependencies.
+Use `user@device-name` if the destination account differs from your local username.
+For connection errors, see [troubleshooting](docs/troubleshooting.md).
 
 ## Documentation
 

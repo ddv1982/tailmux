@@ -6,11 +6,12 @@ Setup preserves unmanaged shell code and does not modify your current shell.
 ```bash
 "$HOME/.local/bin/tailmux" --version
 "$HOME/.local/bin/tailmux" doctor
-"$HOME/.local/bin/tailmux" doctor work.example.ts.net
+"$HOME/.local/bin/tailmux" doctor device-name
 ```
 
 Doctor with a selector reports the selected identity and address without connecting.
-It does not read complete preferences, print environment variables, renew keys, or change configuration.
+Success does not prove SSH access or remote tmux readiness.
+Doctor without a selector lists local dependencies. Read the reported classifications. Exit status zero does not mean every dependency is ready.
 
 | Failure | Action |
 | --- | --- |
@@ -22,7 +23,7 @@ It does not read complete preferences, print environment variables, renew keys, 
 | `invalid-aliases` | Use exactly two fields per entry and canonical full-name or advertised-address targets. |
 | `unknown-selector` | Copy a canonical name or address from your known peer inventory. Shared peers need a full name or explicit canonical alias. |
 | `ambiguous-selector` | Resolve the duplicate identity name or address in the coordination inventory. Tailmux never chooses the first record. |
-| `missing-advertised-host-keys` | Have the destination owner verify Tailscale SSH enablement and policy. Ordinary sshd reachability does not establish wrapper readiness. |
+| `missing-advertised-host-keys` | Follow [the host-key recovery steps](#resolve-missing-advertised-host-keys). |
 | `peer-key-expired` | Have the destination owner renew its intended node identity. Tailmux does not renew it or infer expiry from dates. |
 
 `Online:false` alone does not prevent a connection.
@@ -34,7 +35,42 @@ The App Store and TestFlight Tailscale variants do not expose `tailscale ssh`.
 Tailmux propagates that wrapper error and does not replace the app or retry with ordinary SSH.
 Wrapper errors, remote exit codes, and policy failures propagate through `exec`.
 A remote account without tmux exits 127.
-Configure tmux discovery in the remote account's PATH.
+See [remote tmux discovery](#resolve-tmux-not-found-on-remote).
+
+## Resolve tmux not found on remote
+
+A local `tmux -V` check on the destination does not prove that an SSH command can find tmux.
+After Tailscale SSH setup, run this from your client with the intended destination account:
+
+```bash
+tailscale ssh user@device-name -t 'printf "%s\n" "$PATH"; command -v tmux && tmux -V'
+```
+
+The output should include the remote PATH, tmux executable path, and version.
+If tmux is missing, install it in a directory on that remote PATH or configure the destination's SSH command environment to include its directory.
+An alias or PATH setting loaded only by an interactive shell is insufficient.
+
+## Resolve missing-advertised-host-keys
+
+Tailscale did not provide SSH host keys for the selected device. Tailmux stopped before connecting.
+The destination may not have Tailscale SSH enabled, or the access policy may prevent key distribution.
+
+1. Confirm that the destination has Tailscale SSH enabled. Follow [Prepare the destination](usage.md#prepare-the-destination) if setup is incomplete.
+2. Have your tailnet administrator check network access to destination port 22 and SSH access for your intended destination account.
+3. On your client, retry the selection check:
+
+   ```bash
+   "$HOME/.local/bin/tailmux" doctor device-name
+   ```
+
+4. When the check succeeds, retry the connection:
+
+   ```bash
+   "$HOME/.local/bin/tailmux" device-name
+   ```
+
+An ordinary SSH server does not supply the host keys that `tailscale ssh` requires.
+Keep host-key verification enabled.
 
 ## Resolve lifecycle refusals
 
