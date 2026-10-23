@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'scripts/release'))
 import package as pkg
 
-REQUEST = pkg.ReleaseRequest('v0.2.0', 'a' * 40)
+REQUEST = pkg.ReleaseRequest('v0.2.1', 'a' * 40)
 CERTIFICATE = {'sourceRepositoryIdentifier': '1144643418', 'sourceRepositoryOwnerIdentifier': '240215896'}
 VERIFIED = [{'verificationResult': {'signature': {'certificate': CERTIFICATE}}}]
 
@@ -33,11 +33,11 @@ class DirectInstallTests(unittest.TestCase):
         self.tools.mkdir(mode=0o700)
         self.assets = self.root / 'assets'
         self.assets.mkdir(mode=0o700)
-        self.installer = self.assets / 'tailmux-v0.2.0-installer.py'
+        self.installer = self.assets / 'tailmux-v0.2.1-installer.py'
         self.installer.write_bytes((ROOT / 'scripts/release/package.py').read_bytes())
-        self.archive = self.assets / 'tailmux-v0.2.0.tar.gz'
+        self.archive = self.assets / 'tailmux-v0.2.1.tar.gz'
         self.archive.write_bytes(pkg.assemble(REQUEST, {name: (ROOT / name).read_bytes() for name in pkg.PAYLOAD}))
-        (self.assets / 'tailmux-v0.2.0.sigstore.json').write_text('{"inert":"bundle fixture"}')
+        (self.assets / 'tailmux-v0.2.1.sigstore.json').write_text('{"inert":"bundle fixture"}')
         self.control = {'verification': {'installer': json.dumps(VERIFIED), 'package': json.dumps(VERIFIED)},
                         'gh_status': {}, 'curl_status': {}, 'oversized': {}, 'empty': {},
                         'hashes': {name: hashlib.sha256((self.assets / name).read_bytes()).hexdigest()
@@ -60,7 +60,7 @@ for flag, expected in {'--proto': '=https', '--proto-redir': '=https', '--connec
 for flag in ('--fail', '--silent', '--show-error', '--location'):
     assert flag in args, args
 url = next(value for value in args if value.startswith('https:'))
-assert url.startswith('https://github.com/ddv1982/tailmux/releases/download/v0.2.0/'), url
+assert url.startswith('https://github.com/ddv1982/tailmux/releases/download/v0.2.1/'), url
 name = url.rsplit('/', 1)[1]
 log(['download', name])
 sys.exit(config['curl_status'][name]) if name in config['curl_status'] else None
@@ -82,16 +82,16 @@ log(['verify', kind])
 assert snapshot.parent.stat().st_mode & 0o777 == 0o700
 for flag, value in {'--hostname': 'github.com', '--repo': 'ddv1982/tailmux',
                     '--signer-workflow': 'ddv1982/tailmux/.github/workflows/release.yml',
-                    '--signer-digest': 'a' * 40, '--source-ref': 'refs/tags/v0.2.0',
+                    '--signer-digest': 'a' * 40, '--source-ref': 'refs/tags/v0.2.1',
                     '--source-digest': 'a' * 40, '--format': 'json'}.items():
     assert args[args.index(flag) + 1] == value, args
 assert '--deny-self-hosted-runners' in args
 assert '--bundle' in args
-assert pathlib.Path(args[args.index('--bundle') + 1]).read_bytes() == (root / 'assets/tailmux-v0.2.0.sigstore.json').read_bytes()
+assert pathlib.Path(args[args.index('--bundle') + 1]).read_bytes() == (root / 'assets/tailmux-v0.2.1.sigstore.json').read_bytes()
 if kind in config['gh_status']:
     print(config['verification'][kind])
     sys.exit(config['gh_status'][kind])
-expected = 'tailmux-v0.2.0-installer.py' if kind == 'installer' else 'tailmux-v0.2.0.tar.gz'
+expected = 'tailmux-v0.2.1-installer.py' if kind == 'installer' else 'tailmux-v0.2.1.tar.gz'
 if hashlib.sha256(snapshot.read_bytes()).hexdigest() != config['hashes'][expected]:
     sys.exit(19)
 print(config['verification'][kind])
@@ -150,12 +150,12 @@ os.execv({sys.executable!r}, [{sys.executable!r}, *args])
             installed = self.home / '.local/bin/tailmux'
             self.assertEqual(installed.read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
             version = subprocess.run([str(installed), '--version'], env=self.environment, capture_output=True, text=True)
-            self.assertEqual((version.returncode, version.stdout), (0, 'tailmux 0.2.0\n'))
+            self.assertEqual((version.returncode, version.stdout), (0, 'tailmux 0.2.1\n'))
             self.assertEqual((self.home / '.bashrc').read_text(), 'operator-owned\n')
             self.assertEqual(list(self.stage.iterdir()), [])
         self.assertEqual(self.events()[:6], [
-            ['download', 'tailmux-v0.2.0-installer.py'], ['download', 'tailmux-v0.2.0.sigstore.json'],
-            ['verify', 'installer'], ['execute', 'installer'], ['download', 'tailmux-v0.2.0.tar.gz'],
+            ['download', 'tailmux-v0.2.1-installer.py'], ['download', 'tailmux-v0.2.1.sigstore.json'],
+            ['verify', 'installer'], ['execute', 'installer'], ['download', 'tailmux-v0.2.1.tar.gz'],
             ['verify', 'package']])
         self.assertFalse(any(event[0] == 'FORBIDDEN' for event in self.events()))
 
@@ -268,7 +268,7 @@ os.execv({sys.executable!r}, [{sys.executable!r}, *args])
         self.assertEqual(self.events(), [])
 
     def test_network_size_and_bounded_verifier_failures(self):
-        for name in (self.installer.name, 'tailmux-v0.2.0.sigstore.json', self.archive.name):
+        for name in (self.installer.name, 'tailmux-v0.2.1.sigstore.json', self.archive.name):
             with self.subTest(name=name):
                 self.control['curl_status'] = {name: 22}
                 self.assert_refused(self.bootstrap())
@@ -288,7 +288,7 @@ os.execv({sys.executable!r}, [{sys.executable!r}, *args])
     def installer_cli(self, *args, extra=None):
         self.save()
         return subprocess.run([sys.executable, '-I', str(self.installer), 'install', '--tag', REQUEST.tag,
-                               '--source-sha', REQUEST.source_sha, '--bundle', str(self.assets / 'tailmux-v0.2.0.sigstore.json'),
+                               '--source-sha', REQUEST.source_sha, '--bundle', str(self.assets / 'tailmux-v0.2.1.sigstore.json'),
                                *args], env={**self.environment, **(extra or {})}, capture_output=True, text=True, timeout=30)
 
     def test_installer_cli_prefix_and_clean_setup_environment(self):

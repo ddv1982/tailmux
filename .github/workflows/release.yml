@@ -100,4 +100,4 @@ jobs:
           retention-days: 7
       - name: Publish authenticated direct installer and package
         run: |
-          gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" "dist/tailmux-${TAG}-installer.py" "dist/tailmux-${TAG}.sigstore.json" --repo ddv1982/tailmux --verify-tag --prerelease=false --latest --target "$EXPECTED_SOURCE_SHA" --title "$TAG" --notes-file docs/release-notes-0.2.0.md
+          gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" "dist/tailmux-${TAG}-installer.py" "dist/tailmux-${TAG}.sigstore.json" --repo ddv1982/tailmux --verify-tag --prerelease=false --latest --target "$EXPECTED_SOURCE_SHA" --title "$TAG" --notes-file "docs/release-notes-${TAG#v}.md"

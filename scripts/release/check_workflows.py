@@ -31,7 +31,7 @@ BUILD = ('mkdir -m 700 dist\npython3 scripts/release/package.py build --tag "$TA
 PUBLISH = ('gh release create "$TAG" "dist/tailmux-${TAG}.tar.gz" "dist/tailmux-${TAG}-installer.py" '
            '"dist/tailmux-${TAG}.sigstore.json" --repo ddv1982/tailmux '
            '--verify-tag --prerelease=false --latest --target "$EXPECTED_SOURCE_SHA" --title "$TAG" '
-           '--notes-file docs/release-notes-0.2.0.md')
+           '--notes-file "docs/release-notes-${TAG#v}.md"')
 BUNDLE_COPY = 'cp -- "$BUNDLE_PATH" "dist/tailmux-${TAG}.sigstore.json"'
 
 
