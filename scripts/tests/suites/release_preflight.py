@@ -258,9 +258,9 @@ class ProtectionTests(unittest.TestCase):
                         {'live_acceptance': 'VERIFIED'}, {'operator_id': 82675328.0}, {'extra': True}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 gate.live_waiver(json.dumps({**waiver, **changes}), request)
-        future = {**waiver, 'tag': 'v0.2.3'}
+        future = {**waiver, 'tag': 'v0.2.4'}
         with self.assertRaises(ValueError):
-            gate.live_waiver(json.dumps(future), gate.ReleaseRequest('v0.2.3', SOURCE))
+            gate.live_waiver(json.dumps(future), gate.ReleaseRequest('v0.2.4', SOURCE))
         command = [sys.executable, str(ROOT / 'scripts/release/acceptance.py'), '--tag', request.tag,
                    '--source-sha', SOURCE, '--waiver-sha256', digest]
         result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': raw}, capture_output=True, text=True)
@@ -268,6 +268,32 @@ class ProtectionTests(unittest.TestCase):
         self.assertIn('NOT_VERIFIED', result.stdout)
         result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': raw + ' '}, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_socket_release_waiver_requires_its_own_exact_record(self):
+        request = gate.ReleaseRequest('v0.2.3', SOURCE)
+        waiver = {'schema': 'tailmux-live-only-waiver-v1', 'repository': 'ddv1982/tailmux',
+                  'tag': request.tag, 'source_sha': SOURCE, 'scope': 'live-acceptance-only',
+                  'live_acceptance': 'NOT_VERIFIED', 'operator_id': 82675328,
+                  'reason': 'Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.3 daemon selection patch.'}
+        raw = json.dumps(waiver)
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        command = [sys.executable, str(ROOT / 'scripts/release/acceptance.py'), '--tag', request.tag,
+                   '--source-sha', SOURCE, '--waiver-sha256', digest]
+        result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': raw}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('NOT_VERIFIED', result.stdout)
+        for changes in ({'tag': 'v0.2.2'}, {'source_sha': 'c' * 40}, {'scope': 'all-checks'},
+                        {'reason': 'Earlier release authorization'}, {'live_acceptance': 'VERIFIED'},
+                        {'operator_id': 82675328.0}, {'extra': True}):
+            candidate = json.dumps({**waiver, **changes})
+            result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': candidate}, capture_output=True)
+            self.assertNotEqual(result.returncode, 0, changes)
+        for candidate in (raw + ' ', ''):
+            result = subprocess.run(command, env={'RELEASE_LIVE_ONLY_WAIVER': candidate}, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+        future = {**waiver, 'tag': 'v0.2.4'}
+        with self.assertRaises(ValueError):
+            gate.live_waiver(json.dumps(future), gate.ReleaseRequest('v0.2.4', SOURCE))
 
     def test_api_failures_are_not_treated_as_empty_success(self):
         with patch.object(gate, 'run', side_effect=subprocess.CalledProcessError(1, ['gh', 'api'])):

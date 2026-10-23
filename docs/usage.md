@@ -84,6 +84,31 @@ For a check without opening SSH, run:
 This checks device selection and advertised host keys. It does not test SSH authorization or remote tmux.
 See [troubleshooting](troubleshooting.md) if the check fails.
 
+## Select a Tailscale daemon
+
+Available in v0.2.3 and later.
+Tailmux uses the `tailscale` executable on your PATH and its default daemon selection.
+On a Mac with both the Tailscale app and a separate CLI service, these can represent different devices.
+
+To select a daemon, set `TAILMUX_TAILSCALE_SOCKET` to its absolute local socket path.
+For example, if your service uses `/var/run/tailscaled.socket`:
+
+```bash
+export TAILMUX_TAILSCALE_SOCKET=/var/run/tailscaled.socket
+"$HOME/.local/bin/tailmux" doctor
+"$HOME/.local/bin/tailmux" doctor device-name
+"$HOME/.local/bin/tailmux" device-name
+```
+
+Doctor shows the socket selection in its daemon row. The same selection applies to peer discovery and SSH.
+An unavailable selected daemon causes failure. Tailmux never retries another daemon.
+An empty or relative path is invalid. Quote paths that contain spaces.
+Use the socket path supplied by your Tailscale installation; the example is not a universal default.
+
+Save the export in the startup file your shell loads to keep it across terminals and Tailmux updates.
+Run `unset TAILMUX_TAILSCALE_SOCKET` to restore Tailscale's default selection.
+Tailmux does not start, stop, or configure either service.
+
 ## Device selection
 
 Pass one device name, optionally prefixed with `user@`.

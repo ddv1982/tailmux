@@ -45,6 +45,7 @@ Check local dependencies, then connect using your destination's Tailscale name:
 ```
 
 Use `user@device-name` if the destination account differs from your local username.
+If you run multiple Tailscale installations, [select the intended daemon](docs/usage.md#select-a-tailscale-daemon) once for diagnostics and connections.
 For connection errors, see [troubleshooting](docs/troubleshooting.md).
 
 ## Documentation

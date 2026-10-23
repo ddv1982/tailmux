@@ -196,8 +196,9 @@ def live_waiver(raw, request):
             "v0.2.0": "User explicitly requested stable 0.2.0 without waiting for the live test.",
             "v0.2.1": "Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.1 Linux migration patch.",
             "v0.2.2": "Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.2 optional Sentry reporting release.",
+            "v0.2.3": "Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.3 daemon selection patch.",
         }
-        require(request.tag in reasons, "Live-only waivers are limited to v0.2.0, v0.2.1, and v0.2.2")
+        require(request.tag in reasons, "Live-only waiver is not implemented for this release")
         expected = {"schema": "tailmux-live-only-waiver-v1", "repository": REPOSITORY,
                     "tag": request.tag, "source_sha": request.source_sha, "scope": "live-acceptance-only",
                     "live_acceptance": "NOT_VERIFIED", "operator_id": 82675328,

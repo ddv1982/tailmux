@@ -16,9 +16,10 @@ Doctor without a selector lists local dependencies. Read the reported classifica
 | Failure | Action |
 | --- | --- |
 | `missing-dependency` | Install the named tool through its existing package owner. |
-| `daemon-unavailable` | Inspect the local Tailscale daemon through its operator-owned tools. No fallback connection was started. |
+| `invalid-config` | Set `TAILMUX_TAILSCALE_SOCKET` to an absolute path without control characters, or unset it for Tailscale's default selection. |
+| `daemon-unavailable` | Check the selected daemon and socket. With multiple installations, [select the intended daemon](usage.md#select-a-tailscale-daemon). No fallback connection was started. |
 | `logged-out` | Ask the machine owner to restore the intended identity. Tailmux never logs in or out for you. |
-| `stopped/not-ready` | Resolve the daemon's readiness state before retrying. |
+| `stopped/not-ready` | Check that Tailmux uses the intended daemon, then resolve that daemon's readiness state. |
 | `invalid-schema` | Use a reviewed compatible status schema. Do not replace jq with a text parser. |
 | `invalid-aliases` | Use exactly two fields per entry and canonical full-name or advertised-address targets. |
 | `unknown-selector` | Copy a canonical name or address from your known peer inventory. Shared peers need a full name or explicit canonical alias. |

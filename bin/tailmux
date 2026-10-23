@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -uo pipefail
 export LC_ALL=C
-readonly TAILMUX_VERSION=0.2.2
+readonly TAILMUX_VERSION=0.2.3
 
 usage() {
   printf '%s\n' "tailmux $TAILMUX_VERSION" \
     'Usage: tailmux [user@]selector' '       tailmux doctor [[user@]selector]' \
     '       tailmux --help | --version' \
     'Selectors are known canonical peer names, advertised addresses, or declarative host aliases.' \
+    'Set TAILMUX_TAILSCALE_SOCKET to an absolute socket path to select a daemon.' \
     'Only tailscale ssh is supported. No extra options or remote commands are accepted.'
 }
 report_failure() {
@@ -66,6 +67,18 @@ if [[ $# == 1 ]]; then
     [[ "$user" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}\$?$ ]] || fail 'invalid-request: invalid remote user' 2
   fi
   [[ -n "$selector" && "$selector" != -* && "$selector" != *[!A-Za-z0-9.:_-]* ]] || fail 'invalid-request: invalid selector' 2
+fi
+
+if [[ -n ${TAILMUX_TAILSCALE_SOCKET+x} ]]; then
+  [[ "$TAILMUX_TAILSCALE_SOCKET" == /* && "$TAILMUX_TAILSCALE_SOCKET" != *[[:cntrl:]]* ]] ||
+    fail 'invalid-config: TAILMUX_TAILSCALE_SOCKET must be an absolute path without ASCII control bytes' 2
+  readonly -a tailscale_cmd=(tailscale "--socket=$TAILMUX_TAILSCALE_SOCKET")
+  readonly tailscale_endpoint="socket $TAILMUX_TAILSCALE_SOCKET; daemon executable unknown"
+  readonly tailscale_context=" (socket $TAILMUX_TAILSCALE_SOCKET)"
+else
+  readonly -a tailscale_cmd=(tailscale)
+  readonly tailscale_endpoint='Tailscale CLI default endpoint; daemon executable unknown'
+  readonly tailscale_context=''
 fi
 
 doctor_probe() {
@@ -154,9 +167,9 @@ if [[ "$mode" == doctor && -z "$selector" ]]; then
   cli=unknown daemon=unknown build=unknown
   if [[ -n "$ts_path" && -n "$jq_path" && -n "$head_path" ]]; then
     daemon_read=true
-    if ! raw=$(doctor_probe tailscale version --daemon --json); then
+    if ! raw=$(doctor_probe "${tailscale_cmd[@]}" version --daemon --json); then
       daemon_read=false
-      raw=$(doctor_probe tailscale version --json) || raw=''
+      raw=$(doctor_probe "${tailscale_cmd[@]}" version --json) || raw=''
     fi
     parsed=$(printf '%s' "$raw" | jq -ers '
       def version: type == "string" and length <= 128 and test("\\A[0-9][A-Za-z0-9.+_-]*\\z");
@@ -181,11 +194,11 @@ if [[ "$mode" == doctor && -z "$selector" ]]; then
   fi
   for component in CLI daemon; do
     version=$cli active_path=${ts_path:-unavailable}
-    if [[ "$component" == daemon ]]; then version=$daemon; active_path='unknown (reported through local CLI)'; fi
+    if [[ "$component" == daemon ]]; then version=$daemon; active_path=$tailscale_endpoint; fi
     IFS='|' read -r policy reason <<< "$(doctor_policy tailscale "$version")"
     if [[ "$component" == CLI && "$build" == unreviewed ]]; then policy=unknown; reason='development, dirty, or unstable CLI build; vendor patch evidence required'; fi
     if [[ -z "$ts_path" ]]; then policy=unsupported; reason='required Tailscale executable missing'; fi
-    doctor_row "Tailscale $component" 'transport / Tailscale package owner' "$active_path" "$cli" "$daemon" "$policy" 2026-10-22 "$reason; $mismatch"
+    doctor_row "Tailscale $component" 'transport / Tailscale package owner' "$active_path" "$cli" "$daemon" "$policy" 2026-10-22 "$reason; $mismatch; multiple installations can select different daemons; configure TAILMUX_TAILSCALE_SOCKET; version agreement does not establish the selected installation"
   done
   ssh_version=unknown
   if [[ -n "$ssh_path" && -n "$head_path" ]]; then
@@ -220,10 +233,10 @@ fi
 [[ $(wc -c < "$work/aliases") -le 65536 ]] || fail 'invalid-aliases: hosts file exceeds 64 KiB'
 [[ $(wc -c < "$work/aliases") == $(tr -d '\000' < "$work/aliases" | wc -c) ]] || fail 'invalid-aliases: NUL byte in hosts file'
 
-tailscale status --json 2>/dev/null | head -c 8388609 > "$work/status"
+"${tailscale_cmd[@]}" status --json 2>/dev/null | head -c 8388609 > "$work/status"
 pipeline_status=("${PIPESTATUS[@]}")
 [[ $(wc -c < "$work/status") -le 8388608 ]] || fail 'invalid-schema: status exceeds 8 MiB'
-[[ ${pipeline_status[0]} == 0 && ${pipeline_status[1]} == 0 ]] || fail 'daemon-unavailable: tailscale status failed'
+[[ ${pipeline_status[0]} == 0 && ${pipeline_status[1]} == 0 ]] || fail "daemon-unavailable: tailscale status failed${tailscale_context}"
 [[ $(wc -c < "$work/status") == $(tr -d '\000' < "$work/status" | wc -c) ]] || fail 'invalid-schema: NUL byte in status'
 
 result=$(jq -cs --arg mode "$mode" --arg selector "$selector" --arg user "$user" --rawfile aliases "$work/aliases" '
@@ -314,7 +327,13 @@ result=$(jq -cs --arg mode "$mode" --arg selector "$selector" --arg user "$user"
     . == "ambiguous-selector" or . == "peer-key-expired" or . == "missing-advertised-host-keys"
     then . else "invalid-schema" end)}
 ' "$work/status" 2>/dev/null) || fail 'invalid-schema: status is not exactly one valid JSON document'
-[[ $(printf '%s' "$result" | jq -r '.ok') == true ]] || fail "$(printf '%s' "$result" | jq -r '.error')"
+if [[ $(printf '%s' "$result" | jq -r '.ok') != true ]]; then
+  error=$(printf '%s' "$result" | jq -r '.error')
+  case "$error" in
+    logged-out|stopped/not-ready) error+=$tailscale_context ;;
+  esac
+  fail "$error"
+fi
 if [[ "$mode" == doctor ]]; then
   printf '%s\n' "$result" | jq .target
   exit 0
@@ -323,4 +342,4 @@ destination=$(printf '%s' "$result" | jq -r '.target | (if .user == null then ""
 if ! rm -f "$work/status" "$work/aliases" || ! rmdir "$work"; then fail 'local-io: snapshot cleanup failed'; fi
 trap - EXIT INT TERM
 readonly remote_program='if command -v tmux >/dev/null 2>&1; then tmux attach || tmux new; else printf "%s\n" "tmux not found on remote" >&2; exit 127; fi'
-exec tailscale ssh "$destination" -t "$remote_program"
+exec "${tailscale_cmd[@]}" ssh "$destination" -t "$remote_program"
