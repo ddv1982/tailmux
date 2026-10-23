@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import hashlib
+import shlex
 import subprocess
+import sys
 import unittest
 
 import direct_install as direct
@@ -104,6 +106,29 @@ class SetupScriptTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.fixture.events(), [])
                 self.assertFalse(self.binary.exists())
+
+    def test_readme_verifier_refuses_tampered_or_oversized_script_before_execution(self):
+        block = (ROOT / 'README.md').read_text().split('```bash\n', 1)[1].split('\n```', 1)[0]
+        verifier = shlex.split(block.split('\npython3 ', 1)[1])
+        command = [sys.executable, *verifier[:-1], '--help']
+        payload = (ROOT / 'install.sh').read_bytes()
+        marker = self.fixture.root / 'injection-ran'
+        tampered = ('touch "' + str(marker) + '"\n').encode()
+        for data in (payload + b'\n', tampered, b'x' * 65537, b''):
+            with self.subTest(size=len(data)):
+                result = subprocess.run(command, input=data, env=self.fixture.environment,
+                                        capture_output=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b'checksum mismatch', result.stderr)
+                self.assertFalse(self.binary.exists())
+                self.assertFalse(marker.exists())
+        env = dict(self.fixture.environment, BASH_ENV=str(self.fixture.root / 'injected'))
+        (self.fixture.root / 'injected').write_text('touch "' + str(marker) + '"\n')
+        result = subprocess.run(command, input=payload, env=env, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b'Usage:', result.stdout)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.fixture.events(), [])
 
 
 if __name__ == '__main__':
