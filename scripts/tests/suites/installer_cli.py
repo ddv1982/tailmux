@@ -119,6 +119,13 @@ class Lifecycle(unittest.TestCase):
         self.success('install')
         trace = self.root / 'client-argv'
         self.script('tailscale', '''#!/bin/bash
+if [[ "${1:-}" == --socket=* ]]; then
+  [[ "$1" == "--socket=$EXPECTED_SOCKET" ]] || exit 98
+  printf '%s\\0' "$1" > "$SOCKET_TRACE"
+  shift
+else
+  exit 98
+fi
 case "$1" in
   status) cat "$STATUS_FIXTURE" ;;
   ssh) printf '%s\\0' "$@" > "$CLIENT_TRACE"; exit 37 ;;
@@ -128,9 +135,13 @@ esac
         jq = self.bin / 'jq'
         jq.symlink_to(shutil.which('jq'))
         (self.bin / 'head').symlink_to(shutil.which('head'))
-        env = dict(self.env, STATUS_FIXTURE=str(FIXTURES / 'status-v1.104.2/running.json'), CLIENT_TRACE=str(trace))
+        socket = str(self.root / 'installed daemon.sock')
+        socket_trace = self.root / 'socket-argv'
+        env = dict(self.env, STATUS_FIXTURE=str(FIXTURES / 'status-v1.104.2/running.json'), CLIENT_TRACE=str(trace),
+                   TAILMUX_TAILSCALE_SOCKET=socket, EXPECTED_SOCKET=socket, SOCKET_TRACE=str(socket_trace))
         p = subprocess.run([str(self.prefix / 'tailmux'), 'alice@work'], env=cli_environment(self.bin, env), capture_output=True, text=True)
         self.assertEqual(p.returncode, 37, p.stdout + p.stderr)
+        self.assertEqual(socket_trace.read_bytes(), f'--socket={socket}\0'.encode())
         argv = trace.read_bytes().split(b'\0')[:-1]
         self.assertEqual(argv[:3], [b'ssh', b'alice@100.64.0.20', b'-t'])
         self.assertEqual(len(argv), 4)

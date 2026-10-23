@@ -40,6 +40,11 @@ fi
 exec {shlex.quote(real_jq)} "$@"
 ''')
         self.script('tailscale', '''{ printf 'tailscale'; printf ' %s' "$@"; printf '\\n'; } >> "$TRACE"
+if [[ "${1:-}" == --socket=* ]]; then
+  socket=${1#--socket=}
+  shift
+  [[ -z "${EXPECTED_SOCKET:-}" || "$socket" == "$EXPECTED_SOCKET" ]] || exit 37
+fi
 case "$*" in
   'version --daemon --json') cat "$DAEMON_FILE"; exit "${DAEMON_EXIT:-0}" ;;
   'version --json') cat "$VERSION_FILE"; exit "${CLI_EXIT:-0}" ;;
@@ -111,13 +116,37 @@ exit 97
         rows = self.rows(self.run_doctor())
         self.assertEqual(rows['jq'][2:6], [str(self.bin / 'jq'), '1.8.2', '-', 'supported'])
         self.assertEqual(rows['Tailscale CLI'][2:6], [str(self.bin / 'tailscale'), '1.104.2', '1.104.2', 'supported'])
-        self.assertEqual(rows['Tailscale daemon'][2:6], ['unknown (reported through local CLI)', '1.104.2', '1.104.2', 'supported'])
+        self.assertEqual(rows['Tailscale daemon'][2:6], ['Tailscale CLI default endpoint; daemon executable unknown', '1.104.2', '1.104.2', 'supported'])
         self.assertEqual(rows['OpenSSH'][3:6], ['OpenSSH_10.3p1', '-', 'unknown'])
         self.assertEqual(rows['tmux'][3:6], ['unknown', '-', 'unknown'])
         self.assertEqual(rows['TLS trust'][5], 'unknown')
         self.assertEqual(self.calls(), 'tailscale version --daemon --json\n')
         self.assertIn('OS security maintenance unknown', rows['Bash'][7])
         self.assertIn('platform compatibility unverified', rows['Tailscale CLI'][7])
+
+    def test_selected_socket_inventory_and_cli_only_fallback(self):
+        socket = str(self.root / "daemon space 'quote' * ;$(touch marker).sock")
+        rows = self.rows(self.run_doctor(TAILMUX_TAILSCALE_SOCKET=socket))
+        self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\n')
+        self.assertEqual(rows['Tailscale daemon'][2], f'socket {socket}; daemon executable unknown')
+        self.assertEqual(rows['Tailscale daemon'][3:6], ['1.104.2', '1.104.2', 'supported'])
+        self.assertIn('multiple installations can select different daemons', rows['Tailscale daemon'][7])
+        self.assertIn('TAILMUX_TAILSCALE_SOCKET', rows['Tailscale daemon'][7])
+        self.assertIn('version agreement does not establish the selected installation', rows['Tailscale daemon'][7])
+        self.trace.unlink()
+        rows = self.rows(self.run_doctor(TAILMUX_TAILSCALE_SOCKET=socket, DAEMON_EXIT='37'))
+        self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\ntailscale --socket={socket} version --json\n')
+        self.assertEqual(rows['Tailscale CLI'][3:6], ['1.104.2', 'unknown', 'supported'])
+        self.assertEqual(rows['Tailscale daemon'][4:6], ['unknown', 'unknown'])
+        self.assertFalse((self.root / 'marker').exists())
+
+    def test_failed_selected_socket_inventory_never_uses_default(self):
+        socket = str(self.root / 'missing.sock')
+        rows = self.rows(self.run_doctor(TAILMUX_TAILSCALE_SOCKET=socket,
+                                         EXPECTED_SOCKET=str(self.root / 'working.sock')))
+        self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\ntailscale --socket={socket} version --json\n')
+        self.assertEqual(rows['Tailscale CLI'][3:6], ['unknown', 'unknown', 'unknown'])
+        self.assertEqual(rows['Tailscale daemon'][4:6], ['unknown', 'unknown'])
 
     def test_vendor_builds_and_unreviewed_versions_are_unknown(self):
         for version in ('1.102.3-vendor-backport', '1.104.2-vendor', '1.106.0', '1.104.2-dev20261022'):
