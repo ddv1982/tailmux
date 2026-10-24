@@ -28,7 +28,7 @@ class Runtime(unittest.TestCase):
         self.bin = self.root / 'bin'
         self.home.mkdir()
         self.bin.mkdir()
-        for name in ('bash', 'jq', 'mktemp', 'head', 'wc', 'tr', 'rm', 'rmdir', 'cat'):
+        for name in ('bash', 'jq', 'mktemp', 'head', 'wc', 'tr', 'rm', 'rmdir', 'cat', 'stat', 'ls'):
             command = shutil.which(name)
             self.assertIsNotNone(command, name)
             (self.bin / name).symlink_to(command)
