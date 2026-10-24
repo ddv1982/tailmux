@@ -68,17 +68,17 @@ setup.sh
 
 The builders read committed Git blobs only. Working-tree changes and `.audit` data cannot enter either executable asset. Three literal versions must match the requested tag. The same Python and zlib implementation produces the same archive bytes for the same source. Cross-version compression equivalence is not promised. Outputs are created exclusively.
 
-## Prepare stable v0.2.3
+## Prepare stable v0.3.0
 
 The parent release owner performs publication and repository changes. This guide grants no authority. Source-bound independent code review, actual exact-source successful hosted CI, explicit owner approval, source identity, and artifact authentication remain required. A sole maintainer's GitHub approval is owner authorization and does not claim independent human review.
 
-1. Review the final source S. Keep `VERSION`, `bin/tailmux`, and `setup.sh` at `0.2.3`. Protect the independent repository variable `RELEASE_SOURCE_SHA` and set it to S. Do not infer S from the release event or tag.
+1. Review the final source S. Keep `VERSION`, `bin/tailmux`, and `setup.sh` at `0.3.0`. Protect the independent repository variable `RELEASE_SOURCE_SHA` and set it to S. Do not infer S from the release event or tag.
 2. Require PRs on main with zero GitHub approval reviews, stale-review dismissal, resolved review threads, and no last-push approval requirement. Require strict `full-linux`, `full-macos`, and `workflow-policy` checks from GitHub Actions app `15368`. Independent code review is recorded separately against S.
-3. Establish the `release` environment with exactly User `82675328` as required reviewer, `prevent_self_review=false`, and exactly one tag deployment policy named `v0.2.3`. No branch or wildcard deployment policy is accepted. The validator binds that sole exact tag policy to the requested release; wildcards remain forbidden.
+3. Establish the `release` environment with exactly User `82675328` as required reviewer, `prevent_self_review=false`, and exactly one tag deployment policy named `v0.3.0`. No branch or wildcard deployment policy is accepted. The validator binds that sole exact tag policy to the requested release; wildcards remain forbidden.
 4. Preserve version tags with active repository rules forbidding updates and deletion, without exclusions or bypass actors. Readback accepts the exact tag, `refs/tags/v*`, or all tags. The read-only API can omit bypass actors. The release owner records their authorized readback separately.
 5. Record the environment administrator-bypass state only if an authorized observable source establishes it. The documented environment GET response does not expose it. An unavailable settings page supplies no proof. Do not invent disabled bypass or independent GitHub human approval.
-6. For normal releases, supply real exact-source acceptance evidence through the existing protected variables. A v0.2.3 live-only exception requires a new explicit release-owner decision and its own repository variable `RELEASE_LIVE_ONLY_WAIVER` record below, replacing its source value with S. Previous release authorizations do not carry forward automatically. Missing live acceptance remains `NOT_VERIFIED` in [compatibility](compatibility.md). This exception waives live acceptance only.
-7. Create the lightweight `v0.2.3` tag at S and let its push start the publisher. Review the captured source, main, waiver digest, controls, independent review, and successful source CI before explicitly approving the release environment as the owner.
+6. For normal releases, supply real exact-source acceptance evidence through the existing protected variables. A v0.3.0 live-only exception requires a new explicit release-owner decision and its own repository variable `RELEASE_LIVE_ONLY_WAIVER` record below, replacing its source value with S. Previous release authorizations do not carry forward automatically. Missing live acceptance remains `NOT_VERIFIED` in [compatibility](compatibility.md). This exception waives live acceptance only.
+7. Create the lightweight `v0.3.0` tag at S and let its push start the publisher. Review the captured source, main, waiver digest, controls, independent review, and successful source CI before explicitly approving the release environment as the owner.
 8. After publication, independently authenticate both installer and archive as a consumer. Record actual verification output, source and asset digests, owner approval, and remaining live evidence gaps.
 
 The external waiver record has exactly these fields and types:
@@ -87,16 +87,16 @@ The external waiver record has exactly these fields and types:
 {
   "schema": "tailmux-live-only-waiver-v1",
   "repository": "ddv1982/tailmux",
-  "tag": "v0.2.3",
+  "tag": "v0.3.0",
   "source_sha": "FINAL_40_LOWERCASE_HEX_SOURCE_SHA",
   "scope": "live-acceptance-only",
   "live_acceptance": "NOT_VERIFIED",
   "operator_id": 82675328,
-  "reason": "Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.2.3 daemon selection patch."
+  "reason": "Release owner accepts live SSH coverage as NOT_VERIFIED for the v0.3.0 installation recovery and saved daemon selection release."
 }
 ```
 
-The source value above is documentation, not an accepted SHA. Only the finite v0.2.0, v0.2.1, v0.2.2, and v0.2.3 exceptions are implemented; every other tag still requires real acceptance evidence. An implemented selector is not owner approval: do not set the v0.2.3 record until the release owner explicitly authorizes it. The parser rejects duplicates, extra or missing fields, wrong types or values, oversized records, other tags, and a different source. The SHA-256 of the exact variable bytes is captured before approval and compared afterward. A missing value selects the unchanged real acceptance validator. An invalid value fails closed. The separate selector never fabricates evidence or makes the acceptance validator accept absent evidence.
+The source value above is documentation, not an accepted SHA. Only the finite v0.2.0, v0.2.1, v0.2.2, v0.2.3, and v0.3.0 exceptions are implemented; every other tag still requires real acceptance evidence. An implemented selector is not owner approval: do not set the v0.3.0 record until the release owner explicitly authorizes it. The parser rejects duplicates, extra or missing fields, wrong types or values, oversized records, other tags, and a different source. The SHA-256 of the exact variable bytes is captured before approval and compared afterward. A missing value selects the unchanged real acceptance validator. An invalid value fails closed. The separate selector never fabricates evidence or makes the acceptance validator accept absent evidence.
 
 The unprivileged job reads environment protections, active main rules, tag-preservation rules, and exact-source CI. It requires the latest CI push run at S to complete successfully and independently checks each required job and its app-attributed check run. Skipped, missing, wrong-source, wrong-workflow, wrong-app, or unsuccessful work rejects publication. Minimum read permissions cover contents, Actions, and checks.
 
@@ -106,7 +106,7 @@ After S exists, generate its literal install block from trusted source tools:
 
 ```sh
 python3 scripts/release/package.py bootstrap-command \
-  --tag v0.2.3 --source-sha INDEPENDENTLY_REVIEWED_SOURCE_SHA > /private/install-command.sh
+  --tag v0.3.0 --source-sha INDEPENDENTLY_REVIEWED_SOURCE_SHA > /private/install-command.sh
 ```
 
 Review the output and add it only in documentation descendant D or another separately reviewed distribution channel. The generator validates explicit inputs. It does not discover or authenticate the expected source for the operator.

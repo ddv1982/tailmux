@@ -139,7 +139,9 @@ stage=<.tailmux-stage.basename>
 Digests are 64 lowercase hexadecimal characters. Basenames contain 1 through 96 ASCII letters, digits, dots, underscores, or hyphens, excluding `.` and `..`.
 The parser bounds the current-user-owned regular record to 16 KiB, rejects NUL and noncanonical fields, and never evaluates data.
 Stage and backup paths resolve directly under the caller's validated prefix and require separate metadata and digest checks.
-The writer currently produces only `replace-owned` transactions. The grammar reserves `recover-modified` for later recovery work.
+One replacement writer produces both `replace-owned` and `recover-modified` transactions.
+Recovery requires a modified safe executable, a structurally valid path-bound receipt, and exact approval of the observed executable digest.
+It preserves the receipt's original bytes without changing its expected digest to authorize the modified executable.
 
 The `.tailmux-install-lock/owner` record is a current-user-owned mode `0600` regular file bounded to 256 bytes.
 Its exact lines are `tailmux-lock-v1`, `uid=<decimal-current-uid>`, and `transaction=<transaction-basename>`, each terminated by LF.
@@ -158,7 +160,32 @@ Caught replacement errors and SIGTERM attempt verified rollback. Rollback restor
 Failed rollback preserves the transaction, stage, backup, and lock. SIGKILL also leaves pending evidence, which ordinary lifecycle commands refuse.
 An interruption after transaction removal can leave an owned public pair and owner lock without a record.
 That state requires owner inspection. Recovery limited to recognized pending transactions cannot validate a missing record or release that lock.
-P1 exposes no resume, rollback, or abandoned-lock command.
+Reviewed local setup exposes guarded resume, rollback, and abandoned-lock maintenance for recognized pending transactions.
+
+The setup parser produces one `RecoveryRequest` indexed record, `RECOVERY_REQUEST`, with action, expected current digest, and transaction identity.
+Its mutually exclusive actions are `dry-run`, `apply`, `resume`, `rollback`, and `unlock-abandoned`.
+Preview accepts no approval or transaction. Apply requires the digest and no transaction.
+Maintenance requires both the digest and exact transaction ID. Invalid and duplicate arguments fail before effects.
+No runtime positional command or installed module is added.
+
+Preview reads P1 classification and candidate content identity without Git or installed-client execution.
+Its source path identifies local input and makes no publisher-authenticity claim.
+The candidate's offline config handler reports effective configuration and provenance without changing it.
+Malformed configuration is reported separately and is never silently repaired by recovery.
+Local `configure --socket` delegates directly to that candidate's config writer without a lifecycle prefix operation.
+
+Recovery apply uses the same stage, backup verification, transaction publication, rollback helpers, and lock as clean-owned replacement.
+It rechecks approval, receipt contents, and metadata after acquiring the lock.
+Only an already-owned pair matching the actual candidate can bypass replacement approval as a read-only completed retry.
+A different owned version remains an ordinary `install --replace-owned` operation.
+
+Maintenance validates the exact prefix, transaction schema and identity, owner record, approved current digest, stage and backup hashes, and recognized public pair.
+Resume additionally binds the staged binary to the actual reviewed candidate digest, not just the record's self-declared after digest.
+Pre-publication resume guards run before the replacement rollback trap is armed.
+Rollback restores previous local history without authenticating it.
+Explicit abandoned-lock release asserts that no writer remains active and only removes a fully validated matching pending transaction's lock.
+It does not publish or resume. Resume and rollback subsequently acquire the ordinary lock with the same transaction identity and revalidate.
+Unknown, malformed, recordless, and completed-cleanup locks remain owner-inspection cases.
 
 The executable and receipt are separate renames, not one atomic commit.
 Completion requires matching public contents before the transaction is removed and the lock is released.
