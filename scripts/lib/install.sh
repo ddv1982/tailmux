@@ -417,10 +417,11 @@ do_replace_owned() (
   LIFECYCLE_CONTEXT[0]="$TAILMUX_PREFIX"
   inspect_installation "$TAILMUX_PREFIX"
   if [[ "$operation" == recover-modified ]]; then
-    recovery_apply_allowed &&
-      [[ "$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" == "$approved_receipt" ]] || {
-      rc_error 'Recovery observation changed under the lifecycle lock; preview again' "$TAILMUX_PREFIX"; return 1;
-    }
+    if ! recovery_apply_allowed ||
+      [[ "$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" != "$approved_receipt" ]]; then
+      rc_error 'Recovery observation changed under the lifecycle lock; preview again' "$TAILMUX_PREFIX"
+      return 1
+    fi
   else
     installation_allowed && [[ "$INSTALL_STATE" == owned ]] || return 1
   fi
