@@ -38,6 +38,7 @@ It checks regular type before opening and requires current-user ownership, one h
 Ancestry requires root or current-user ownership. HOME and its config directories require current-user ownership and no group or other writes.
 Only root-owned sticky ancestors may be group or other writable.
 Batched `stat` and `ls` calls validate metadata and ACLs for all extant components in each read.
+On macOS, these calls use `/usr/bin/stat` and `/bin/ls` so GNU tools earlier in PATH cannot change their flag semantics.
 Unknown or mutating ACLs are refused. The exact macOS directory ACL `group:everyone deny delete` is accepted.
 File flags on macOS must be zero. Root directory flags do not establish config ownership.
 A bounded `head` and `tr` pipeline maps NUL to a rejected control byte before parsing.

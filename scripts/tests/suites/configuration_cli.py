@@ -227,7 +227,8 @@ class Configuration(unittest.TestCase):
     def test_failed_and_empty_reader_tools_are_not_absence(self):
         self.save(b'tailmux-config-v1\nsocket=/saved\n')
         original = self.config.read_bytes()
-        for name in ('stat', 'ls', 'head', 'tr'):
+        names = ('head', 'tr') if os.uname().sysname == 'Darwin' else ('stat', 'ls', 'head', 'tr')
+        for name in names:
             real = shutil.which(name)
             for body in ('exit 42', 'exit 0', 'printf "tailmux-config-v1\\nsocket=/saved\\n"; exit 42'):
                 with self.subTest(name=name, body=body):
@@ -239,6 +240,25 @@ class Configuration(unittest.TestCase):
                     self.assertEqual(self.fx.calls(), [])
                     (self.bin / name).unlink()
                     (self.bin / name).symlink_to(real)
+
+    @unittest.skipUnless(os.uname().sysname == 'Darwin', 'macOS system metadata tools')
+    def test_macos_metadata_ignores_incompatible_path_tools(self):
+        for name in ('stat', 'ls'):
+            (self.bin / name).unlink()
+            self.fx.script(name, '#!/bin/bash\nprintf incompatible-metadata >> "$FORBIDDEN"\nexit 42\n')
+        self.ok('--config', 'show')
+        self.ok('--config', 'set', 'socket', '/saved with GNU tools')
+        result = self.ok('--config', 'show')
+        self.assertIn('Effective socket: /saved with GNU tools\nSource: saved\n', result.stdout)
+        self.ok('doctor', 'work')
+        self.ok('work')
+        prefix = b'--socket=/saved with GNU tools'
+        self.assertEqual(self.fx.calls(), [[prefix, b'status', b'--json'],
+                                          [prefix, b'status', b'--json'],
+                                          [prefix, b'ssh', b'100.64.0.20', b'-t', runtime_cli.REMOTE.encode()]])
+        self.ok('--config', 'reset', 'socket')
+        self.assertFalse(self.config.exists())
+        self.assertFalse(self.fx.forbidden.exists())
 
     def test_local_config_failures_never_report_to_sentry(self):
         self.fx.script('curl', '#!/bin/bash\nprintf forbidden-curl >> "$FORBIDDEN"\nexit 97\n')
@@ -311,15 +331,15 @@ class Configuration(unittest.TestCase):
         self.assertEqual(self.fx.calls(), [])
 
     def test_own_acquisition_failure_cleans_lock_unknown_lock_stays(self):
-        real = shutil.which('stat')
-        (self.bin / 'stat').unlink()
-        self.fx.script('stat', '#!/bin/bash\nfor arg; do [[ "$arg" != */.config-lock ]] || exit 42; done\nexec ' + real + ' "$@"\n')
+        real = shutil.which('mkdir')
+        (self.bin / 'mkdir').unlink()
+        self.fx.script('mkdir', '#!/bin/bash\n' + real + ' "$@" || exit "$?"\nfor arg; do [[ "$arg" != */.config-lock ]] || chmod 0777 "$arg" || exit "$?"; done\n')
         result = self.run_cli('--config', 'set', 'socket', '/new')
         self.assertEqual(result.returncode, 2)
         lock = self.config.parent / '.config-lock'
         self.assertFalse(lock.exists())
-        (self.bin / 'stat').unlink()
-        (self.bin / 'stat').symlink_to(real)
+        (self.bin / 'mkdir').unlink()
+        (self.bin / 'mkdir').symlink_to(real)
         lock.mkdir()
         (lock / 'unknown').write_bytes(b'owner evidence')
         for args in [('--config', 'set', 'socket', '/new'), ('--config', 'reset', 'socket')]:

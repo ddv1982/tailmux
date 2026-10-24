@@ -76,8 +76,8 @@ config_metadata() {
   done
   case "$OSTYPE" in
     darwin*)
-      metadata=$(stat -f '%u %p %l %z %f' "${paths[@]}") || return 1
-      listing=$(ls -lde "${paths[@]}") || return 1 ;;
+      metadata=$(/usr/bin/stat -f '%u %p %l %z %f' "${paths[@]}") || return 1
+      listing=$(/bin/ls -lde "${paths[@]}") || return 1 ;;
     linux*)
       metadata=$(stat -c '%u %a %h %s 0' "${paths[@]}") || return 1
       listing=$(ls -ld -- "${paths[@]}") || return 1 ;;
