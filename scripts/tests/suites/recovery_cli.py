@@ -36,6 +36,20 @@ class Recovery(unittest.TestCase):
         self.addCleanup(self.fx.doCleanups)
         self.root, self.home, self.bin = self.fx.root, self.fx.home, self.fx.bin
         self.prefix = self.fx.prefix
+        self.source = self.root / 'reviewed-source'
+        library = self.source / 'scripts/lib'
+        library.mkdir(parents=True, mode=0o700)
+        for module in (ROOT / 'scripts/lib').glob('*.sh'):
+            target = library / module.name
+            target.write_bytes(module.read_bytes())
+            target.chmod(0o644)
+        self.setup = self.source / 'setup.sh'
+        self.setup.write_bytes(SETUP.read_bytes())
+        self.setup.chmod(0o644)
+        (self.source / 'bin').mkdir(mode=0o700)
+        candidate = self.source / 'bin/tailmux'
+        candidate.write_bytes(CANDIDATE.read_bytes())
+        candidate.chmod(0o755)
         (self.bin / 'head').symlink_to(shutil.which('head'))
         self.addCleanup(self.assert_no_forbidden)
 
@@ -43,7 +57,7 @@ class Recovery(unittest.TestCase):
         self.assertFalse(self.fx.trace.exists(), self.fx.trace.read_text() if self.fx.trace.exists() else '')
 
     def run_setup(self, *args, **changes):
-        return self.fx.run_setup(*args, **changes)
+        return self.fx.run_setup(*args, setup=self.setup, **changes)
 
     def ok(self, *args, **changes):
         result = self.run_setup(*args, **changes)
@@ -91,9 +105,35 @@ class Recovery(unittest.TestCase):
         result = self.recover('--dry-run')
         for literal in ('Classification: modified', str(self.prefix), sha(wrapper),
                         receipt.decode().splitlines()[2], '0.3.0', sha(CANDIDATE.read_bytes()),
-                        str(ROOT), '.tailmux-backup.XXXXXX', 'Effective socket:'):
+                        str(self.source), '.tailmux-backup.XXXXXX', 'Effective socket:'):
             self.assertIn(literal, result.stdout)
         self.assertEqual(self.inventory(), before)
+
+    def test_candidate_fixture_is_private_when_checkout_ancestor_has_acl(self):
+        self.modified()
+        self.fx.script('ls', '''#!/bin/bash
+for arg; do
+  if [[ "$arg" == "$CHECKOUT_ANCESTOR" ]]; then
+    printf '%s\\n' 'drwxr-xr-x+ fixture checkout ancestor'
+    exit 0
+  fi
+done
+exec "''' + shutil.which('ls') + '''" "$@"
+''')
+        before = self.inventory()
+        result = self.recover('--dry-run', CHECKOUT_ANCESTOR=str(ROOT / 'bin'))
+        self.assertIn('Classification: modified', result.stdout)
+        self.assertIn(str(self.source), result.stdout)
+        self.assertEqual((self.source / 'bin/tailmux').read_bytes(), CANDIDATE.read_bytes())
+        self.assertEqual(self.inventory(), before)
+        self.ok('configure', '--socket', '/fixture.sock', CHECKOUT_ANCESTOR=str(ROOT / 'bin'))
+        self.assertEqual((self.home / '.config/tailmux/config').read_bytes(),
+                         b'tailmux-config-v1\nsocket=/fixture.sock\n')
+        before = self.inventory()
+        for args in [('recover', '--dry-run'), ('configure', '--socket', '/refused.sock')]:
+            self.refuse(*args, CHECKOUT_ANCESTOR=str(self.source / 'bin'),
+                        contains='Unknown or mutating RC ancestor ACLs')
+            self.assertEqual(self.inventory(), before)
 
     def test_exact_apply_backup_and_idempotence(self):
         wrapper, receipt = self.modified()
@@ -226,7 +266,7 @@ esac
 "''' + shutil.which('mv') + '''" "$@" || exit
 if $pause; then : > "$PUBLISHER_READY"; exec /bin/sleep 30; fi
 ''')
-        p = subprocess.Popen(['/bin/bash', str(SETUP), 'recover', '--prefix', str(self.prefix),
+        p = subprocess.Popen(['/bin/bash', str(self.setup), 'recover', '--prefix', str(self.prefix),
                               '--expect-current-sha256', sha(WRAPPER)],
                              env=cli_environment(self.bin, self.fx.env, PAUSE_AT=boundary, PUBLISHER_READY=str(ready)),
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
