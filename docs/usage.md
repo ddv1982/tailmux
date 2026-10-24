@@ -10,8 +10,6 @@ Append `--prefix /absolute/path/bin` for a custom binary directory.
 All public actions, including recovery preview and configuration, require network access and the README's trusted installer tools.
 Help is offline.
 
-The prepared v0.3.0 adapter pins source `877f8ffedacb68c8f78d0ce38ed506a4456d96ab`.
-Its assets are not yet published. The README command remains pinned to v0.2.3 until the release owner authenticates the new assets and publishes the matching command.
 The following replacement, recovery, and saved-setting behavior requires v0.3.0.
 
 `install` creates the executable and ownership receipt in `~/.local/bin`.

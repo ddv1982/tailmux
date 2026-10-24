@@ -2,8 +2,8 @@
 
 Tailmux supports a no-checkout direct installer for macOS and Linux. The README's short command downloads `install.sh` from an exact commit and checks its independently pinned SHA-256 before passing the verified bytes to Bash. Obtain that command through a channel you trust. Its literals are the first trust boundary. A compromised command distribution channel can replace those expectations.
 
-The prepared shell entrypoint pins v0.3.0 and frozen release source S, `877f8ffedacb68c8f78d0ce38ed506a4456d96ab`.
-The v0.3.0 tag and assets are not yet published. The current README command still pins the working v0.2.3 distribution.
+The shell entrypoint pins v0.3.0 and release source S, `877f8ffedacb68c8f78d0ce38ed506a4456d96ab`.
+The README pins the later installer commit and its exact checksum.
 Do not merge new public pins until the exact new installer and archive independently authenticate.
 
 Distribution has three distinct commits. S contains the reviewed runtime, setup, release tools, and workflows.
@@ -147,7 +147,7 @@ Pinned actions disable persisted checkout credentials. The publisher disables re
 
 Stop using a faulty candidate. Use the [recovery guide](troubleshooting.md#recover-a-modified-client) to inspect a modified or pending installation and preserve its verified backups. Use reviewed uninstall only when ownership remains valid. Networking identity, daemons, packages, server settings, and tailnet policy remain with their operators.
 
-There is no previous authenticated operational artifact recorded in this source. Restore an earlier release only when it exists, independently matches its expected identity, and passes the same verification. Otherwise use a reviewed recovery checkout with connections disabled until recovery is accepted. Recovery must preserve fail-closed resolution, the single Tailscale SSH transport, and operator-owned provisioning.
+Restore an earlier release only when it exists, independently matches its expected identity, and passes the same verification. Otherwise use a reviewed recovery checkout with connections disabled until recovery is accepted. Recovery must preserve fail-closed resolution, the single Tailscale SSH transport, and operator-owned provisioning.
 
 ## Source contracts
 

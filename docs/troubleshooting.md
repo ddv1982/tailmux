@@ -109,8 +109,7 @@ No lifecycle failure is reported as complete.
 
 ## Recover a modified client
 
-The public recovery interface requires the v0.3.0 adapter. Its assets are not yet published.
-The current README command still selects v0.2.3. Use an independently reviewed local checkout until the release owner publishes the new verified command.
+The recovery interface requires v0.3.0. Obtain the verified command from the [README](../README.md#install-update-or-uninstall).
 
 With the v0.3.0 verified README command, replace `install` on its last line with the arguments shown below.
 Keep every download and checksum-verification line unchanged. Each invocation authenticates the pinned installer and package before running packaged setup.
