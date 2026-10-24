@@ -64,6 +64,12 @@ class SetupScriptTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / 'tailmux').read_bytes(), expected)
 
+    def test_published_adapter_installs_its_pinned_source_not_the_candidate(self):
+        source = re.search(r'^source_sha=([0-9a-f]{40})$', (ROOT / 'install.sh').read_text(), re.MULTILINE).group(1)
+        expected = subprocess.check_output(['git', '-C', str(ROOT), 'show', source + ':bin/tailmux'])
+        self.success('install')
+        self.assertEqual(self.binary.read_bytes(), expected)
+
     def test_update_replaces_owned_older_bytes_and_retains_backup(self):
         self.success('install')
         older = b'#!/bin/bash\nexit 98\n'
