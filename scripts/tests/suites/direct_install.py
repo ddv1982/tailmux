@@ -65,7 +65,7 @@ class DirectInstallTests(unittest.TestCase):
                         'tag': self.request.tag, 'source_sha': self.request.source_sha,
                         'gh_status': {}, 'curl_status': {}, 'oversized': {}, 'empty': {},
                         'hashes': {name: hashlib.sha256((self.assets / name).read_bytes()).hexdigest()
-                                   for name in (self.installer.name, self.archive.name)}}
+                                   for name in (self.installer.name, self.archive.name, self.bundle.name)}}
         self.save()
         common = (f'#!{sys.executable}\nimport hashlib, json, os, pathlib, shutil, subprocess, sys\n'
                   f'root = pathlib.Path({str(self.root)!r})\n'
@@ -112,6 +112,8 @@ for flag, value in {'--hostname': 'github.com', '--repo': 'ddv1982/tailmux',
 assert '--deny-self-hosted-runners' in args
 assert '--bundle' in args
 assert pathlib.Path(args[args.index('--bundle') + 1]).read_bytes() == (root / 'assets' / ('tailmux-' + config['tag'] + '.sigstore.json')).read_bytes()
+if hashlib.sha256(pathlib.Path(args[args.index('--bundle') + 1]).read_bytes()).hexdigest() != config['hashes']['tailmux-' + config['tag'] + '.sigstore.json']:
+    sys.exit(19)
 if kind in config['gh_status']:
     print(config['verification'][kind])
     sys.exit(config['gh_status'][kind])
@@ -130,6 +132,14 @@ if config.get('root') and args == ['-I', '-']:
 if config.get('old_python') and args[:2] == ['-I', '-c']:
     sys.exit('Python 3.11 or later is required.')
 os.execv({sys.executable!r}, [{sys.executable!r}, *args])
+''')
+        if published:
+            self.tool('bash', common + '''
+args = sys.argv[1:]
+if args and args[0].endswith('/setup.sh'):
+    assert not any(key.startswith('TAILMUX') or key in ('BASH_ENV', 'ENV', 'PYTHONPATH') for key in os.environ)
+    log(['setup', *args[1:]])
+os.execv('/bin/bash', ['/bin/bash', *args])
 ''')
         for name in ('tailscale', 'ssh', 'tmux', 'sudo'):
             self.tool(name, common + "log(['FORBIDDEN', pathlib.Path(sys.argv[0]).name]); sys.exit(99)\n")
