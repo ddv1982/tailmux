@@ -75,7 +75,7 @@ Keep host-key verification enabled.
 
 ## Resolve lifecycle refusals
 
-Setup accepts only absolute HOME, ZDOTDIR, and prefix paths without line breaks.
+Ordinary setup accepts only absolute HOME, ZDOTDIR, and prefix paths without line breaks.
 Spaces are supported.
 It refuses unsafe writable ancestors, unexpected ACLs, unsupported metadata, ambiguous ownership, and symlinked writes.
 The current user and root remain trusted owners.
@@ -101,9 +101,37 @@ Keep these backups until you have checked the migration.
 Interrupted receipt-first publication can leave a receipt without an executable.
 Retry the same reviewed source and prefix, or run uninstall to remove that owned receipt.
 A pre-existing executable without a valid receipt remains foreign and requires manual inspection.
-An interruption can also leave a lifecycle lock or stage directory.
-After confirming no setup process is active, inspect those exact paths before removing the stale lock and retrying.
-Setup never clears an unknown lock automatically.
+An interruption can also leave a lifecycle lock or stage directory. Preserve these artifacts for inspection.
+Setup never clears a lock automatically, even if it appears old or its original process has exited.
 A failed migration can leave the verified executable installed and some recognized blocks already removed.
 The error remains nonzero. Retry after resolving the reported cause.
 No lifecycle failure is reported as complete.
+
+## Replace an unchanged owned client from a reviewed checkout
+
+Use the local replacement option with the same absolute prefix as the existing installation:
+
+```bash
+/bin/bash setup.sh install --replace-owned --prefix "$HOME/.local/bin"
+```
+
+This option requires an existing regular executable whose bytes match its valid receipt.
+It does not inspect or migrate RC files. Unknown legacy blocks or an unrelated ZDOTDIR do not block replacement.
+Keep using ordinary `install` for a fresh prefix or receipt-only recovery.
+The public installer and its `update` action have not changed to this local replacement path.
+
+Successful replacement retains a private `.tailmux-backup.*` directory containing the previous executable and receipt.
+Check the printed absolute executable path and retain that backup until you have checked the new client.
+The receipt proves local bookkeeping, not publisher authenticity. Review or authenticate the candidate separately.
+
+If replacement fails, read the nonzero result and rollback message.
+A caught publication failure or SIGTERM attempts to restore both previous files from verified backups.
+If rollback cannot complete, or SIGKILL interrupts replacement, preserve `.tailmux-transaction`, its named stage and backup, and `.tailmux-install-lock/owner`.
+The error identifies a recognized pending transaction by ID. Install, replacement, and uninstall refuse it without further changes.
+Do not delete a lock, rewrite a receipt, or rerun publication by hand to bypass that refusal.
+P1 has no operator resume, rollback, or abandoned-lock command. Have the owner inspect the saved record and artifacts before any manual recovery.
+Malformed records, mismatched digests, symlinks, and special files require owner inspection and remain untouched.
+
+An interruption after transaction removal can leave a completed owned client and its owner lock without a transaction record.
+All lifecycle commands still refuse that lock. Preserve the lock, stage, and backups for owner inspection.
+A recovery procedure that requires a recognized pending transaction does not apply when its record is absent.

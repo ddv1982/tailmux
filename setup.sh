@@ -5,11 +5,12 @@ TAILMUX_VERSION=0.2.3
 
 setup_help() {
   printf '%s\n' "tailmux setup $TAILMUX_VERSION" '' \
-    'Usage: bash setup.sh <command> [--prefix /absolute/bin/directory]' '' 'Commands:' \
+    'Usage: bash setup.sh <command> [--prefix /absolute/bin/directory] [--replace-owned]' '' 'Commands:' \
     '  install     Install the local standalone client' \
     '  uninstall   Remove the owned client and recognized legacy blocks' \
     '  update      Deprecated; dependencies belong to their package owners' '' \
-    'Options:' '  --help, -h     Show help without loading modules' \
+    'Options:' '  --replace-owned  Replace an unchanged owned client without RC migration' \
+    '  --help, -h     Show help without loading modules' \
     '  --version, -V  Show version without loading modules'
 }
 
@@ -20,12 +21,31 @@ if [[ $# == 1 ]]; then
     update) printf '%s\n' 'tailmux update is deprecated. Use existing package owners for dependency updates.' >&2; exit 1 ;;
   esac
 fi
-[[ $# == 1 || ( $# == 3 && "$2" == --prefix ) ]] || { setup_help >&2; exit 2; }
+[[ $# -ge 1 ]] || { setup_help >&2; exit 2; }
 case "$1" in
   install|uninstall) ;;
   *) printf 'Unknown command: %s\n' "$1" >&2; setup_help >&2; exit 2 ;;
 esac
-export TAILMUX_PREFIX=${3-"${HOME:-}/.local/bin"}
+command=$1
+shift
+TAILMUX_REPLACE_OWNED=false
+TAILMUX_PREFIX="${HOME:-}/.local/bin"
+prefix_seen=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix)
+      [[ $# -ge 2 && "$prefix_seen" == false ]] || { setup_help >&2; exit 2; }
+      TAILMUX_PREFIX=$2
+      prefix_seen=true
+      shift 2 ;;
+    --replace-owned)
+      [[ "$command" == install && "$TAILMUX_REPLACE_OWNED" == false ]] || { setup_help >&2; exit 2; }
+      TAILMUX_REPLACE_OWNED=true
+      shift ;;
+    *) setup_help >&2; exit 2 ;;
+  esac
+done
+export TAILMUX_PREFIX
 
 if [[ ! -f "${BASH_SOURCE[0]}" || "${BASH_SOURCE[0]}" == /dev/fd/* || "${BASH_SOURCE[0]}" == /proc/*/fd/* ]]; then
   printf '%s\n' 'Error: remote/process-substitution setup is disabled. Run bash setup.sh from a reviewed local checkout.' >&2
@@ -44,4 +64,4 @@ for module in "${REQUIRED_MODULES[@]}"; do
   # shellcheck source=/dev/null
   source "$LIB_DIR/$module"
 done
-main "$1"
+main "$command"

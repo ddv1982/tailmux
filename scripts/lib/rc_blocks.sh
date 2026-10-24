@@ -5,10 +5,11 @@ rc_error() {
 }
 
 validate_rc_path() {
-  local rc="$1" component parent_uid parent_mode ancestor_uid ancestor_mode ancestor_listing
+  local rc="$1" boundary="${2:-/}" component parent_uid parent_mode ancestor_uid ancestor_mode ancestor_listing platform="${3:-$(uname -s)}"
   [[ "$rc" == /* && "$rc" != *$'\n'* && "$rc" != *'/../'* && "$rc" != *'/./'* ]] || {
     rc_error 'RC path must be absolute and contain no dot components or newlines' "$rc"; return 1;
   }
+  [[ "$boundary" == / || "$rc" == "$boundary/"* ]] || return 1
   component="$rc"
   while [[ "$component" != / ]]; do
     if [[ -L "$component" ]]; then
@@ -17,19 +18,20 @@ validate_rc_path() {
     fi
     component="${component%/*}"
     [[ -n "$component" ]] || component=/
-    if [[ "$(uname -s)" == Darwin ]]; then
+    [[ "$boundary" == / || "$component" != "$boundary" ]] || break
+    if [[ "$platform" == Darwin ]]; then
       ancestor_listing="$(LC_ALL=C ls -lde "$component")" || return 1
     else
       ancestor_listing="$(LC_ALL=C ls -ld "$component")" || return 1
     fi
     if [[ "$ancestor_listing" == *$'\n'* ]]; then
-      if [[ "$(uname -s)" != Darwin || "${ancestor_listing#*$'\n'}" != ' 0: group:everyone deny delete' ]]; then
+      if [[ "$platform" != Darwin || "${ancestor_listing#*$'\n'}" != ' 0: group:everyone deny delete' ]]; then
         rc_error 'Unknown or mutating RC ancestor ACLs are refused' "$rc"; return 1
       fi
     elif [[ "${ancestor_listing%% *}" == *+ ]]; then
       rc_error 'Unknown or mutating RC ancestor ACLs are refused' "$rc"; return 1
     fi
-    read -r ancestor_uid _ ancestor_mode _ < <(rc_metadata "$component")
+    read -r ancestor_uid _ ancestor_mode _ < <(rc_metadata "$component" "$platform")
     if [[ "$ancestor_uid" != "$UID" && "$ancestor_uid" != 0 ]] || [[ ! "$ancestor_mode" =~ ^[0-7]+$ ]]; then
       rc_error 'RC ancestor must be owned by the current user or root' "$rc"; return 1
     fi
@@ -38,7 +40,7 @@ validate_rc_path() {
     fi
   done
   [[ -d "${rc%/*}" ]] || { rc_error 'RC parent directory is missing' "$rc"; return 1; }
-  read -r parent_uid _ parent_mode _ < <(rc_metadata "${rc%/*}")
+  read -r parent_uid _ parent_mode _ < <(rc_metadata "${rc%/*}" "$platform")
   if [[ "$parent_uid" != "$UID" || ! "$parent_mode" =~ ^[0-7]+$ ]] || (( (8#$parent_mode & 0022) != 0 )); then
     rc_error 'RC parent must be current-user owned and not group or other writable' "$rc"; return 1
   fi
@@ -48,7 +50,7 @@ validate_rc_path() {
 }
 
 rc_metadata() {
-  if [[ "$(uname -s)" == Darwin ]]; then
+  if [[ "${2:-$(uname -s)}" == Darwin ]]; then
     stat -f '%u %g %p %l %i %m %c %z' "$1"
   else
     stat -c '%u %g %a %h %i %Y %Z %s' "$1"
@@ -56,15 +58,17 @@ rc_metadata() {
 }
 
 validate_rc_metadata() {
-  local rc="$1" uid mode links listing original_bytes text_bytes
-  read -r uid _ mode links _ < <(rc_metadata "$rc")
+  local rc="$1" platform="${2:-$(uname -s)}" limit="${3:-0}" expected_mode="${4:-}" uid mode links listing size text_bytes
+  read -r uid _ mode links _ _ _ size < <(rc_metadata "$rc" "$platform")
   if [[ "$uid" != "$UID" || "$links" != 1 || ! "$mode" =~ ^[0-7]+$ ]]; then
     rc_error 'RC must be current-user owned with one hard link' "$rc"; return 1
   fi
+  [[ "$size" =~ ^[0-9]+$ ]] && { [[ "$limit" == 0 ]] || (( size <= limit )); } || return 1
+  [[ -z "$expected_mode" ]] || (( (8#$mode & 07777) == 8#$expected_mode )) || return 1
   if (( (8#$mode & 0022) != 0 )); then
     rc_error 'Group or other writable RC files are refused' "$rc"; return 1
   fi
-  if [[ "$(uname -s)" == Darwin ]]; then
+  if [[ "$platform" == Darwin ]]; then
     listing="$(LC_ALL=C ls -lde "$rc")" || return 1
   else
     listing="$(LC_ALL=C ls -ld "$rc")" || return 1
@@ -74,13 +78,13 @@ validate_rc_metadata() {
   fi
   listing="${listing%% *}"
   if [[ ${#listing} -ne 10 &&
-    ! ( "$(uname -s)" == Darwin && "$listing" == ??????????@ ) &&
-    ! ( "$(uname -s)" == Linux && "$listing" == ??????????. ) ]]; then
+    ! ( "$platform" == Darwin && "$listing" == ??????????@ ) &&
+    ! ( "$platform" == Linux && "$listing" == ??????????. ) ]]; then
     rc_error 'RC has ACLs or extended metadata; use operator-managed removal' "$rc"; return 1
   fi
-  original_bytes="$(wc -c < "$rc")" || return 1
   text_bytes="$(LC_ALL=C tr -d '\000' < "$rc" | wc -c)" || return 1
-  if [[ "$original_bytes" != "$text_bytes" ]]; then
+  text_bytes=${text_bytes//[[:space:]]/}
+  if [[ "$size" != "$text_bytes" ]]; then
     rc_error 'RC contains NUL bytes or is unreadable' "$rc"; return 1
   fi
 }
