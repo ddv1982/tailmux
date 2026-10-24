@@ -5,8 +5,9 @@ It runs under Bash 3.2 or later and contains its private jq filter.
 It never loads setup modules or shell startup files.
 
 One immutable command array holds the PATH-resolved `tailscale` invocation and optional global socket argument.
-`TAILMUX_TAILSCALE_SOCKET` selects an absolute local socket path for all version probes, status reads, and SSH.
-Unset configuration retains Tailscale's default selection. Invalid explicit configuration fails before daemon access.
+One effective socket and source selection feeds that array for all version probes, status reads, and SSH.
+An explicitly set `TAILMUX_TAILSCALE_SOCKET` wins, including invalid or empty values, which fail before daemon access.
+A valid override bypasses lower-priority config reads. Otherwise saved config wins, then the native CLI default when the config is absent.
 An unavailable selected endpoint never triggers a retry through the default daemon.
 Doctor reports endpoint selection without discovering other installations or changing services.
 
@@ -20,10 +21,49 @@ See [monitoring configuration](usage.md#optional-sentry-error-reporting).
 
 | Record | Fields |
 | --- | --- |
+| SavedSocket | Bash indexed record `saved_socket` with state, literal socket, and diagnostic. States are `absent`, `valid`, `malformed`, `unknown`, and `unsafe` |
+| EffectiveSocket | One literal value and source, either `environment`, `saved`, or `native default` |
 | Request | `connect` or `doctor`, selector, optional user, `tailscale-ssh`, `attach-any` |
 | Snapshot | Backend, current tailnet suffix, peer stable IDs, canonical DNS, advertised addresses, `sshHostKeys`, `InNetworkMap`, advisory `Online`, optional `Expired` defaulting to false |
 | ResolvedTarget | One stable peer identity, canonical DNS, chosen advertised address, optional user |
 | Failure | One named error with no transport invocation |
+
+`$HOME/.config/tailmux/config` has exactly two LF-terminated records, `tailmux-config-v1` and `socket=/absolute/path`.
+The 8 KiB boundary rejects NUL, ASCII controls in the socket, extra records, and missing final LF.
+Spaces, Unicode, and shell punctuation remain literal. No runtime Python or additional installed artifact is involved.
+The existing hosts path remains unchanged.
+
+The config reader refuses symlinks at the file and every ancestor, even for user-owned dotfiles links.
+It checks regular type before opening and requires current-user ownership, one hard link, mode `0600`, bounded size, and supported metadata.
+Ancestry requires root or current-user ownership. HOME and its config directories require current-user ownership and no group or other writes.
+Only root-owned sticky ancestors may be group or other writable.
+Batched `stat` and `ls` calls validate metadata and ACLs for all extant components in each read.
+On macOS, these calls use `/usr/bin/stat` and `/bin/ls` so GNU tools earlier in PATH cannot change their flag semantics.
+Unknown or mutating ACLs are refused. The exact macOS directory ACL `group:everyone deny delete` is accepted.
+File flags on macOS must be zero. Root directory flags do not establish config ownership.
+A bounded `head` and `tr` pipeline maps NUL to a rejected control byte before parsing.
+The reader checks pipeline status and byte count before parsing, including successful empty utility output.
+Command substitution retains final LF with a sentinel. Process substitution does not carry producer success across the boundary.
+Absent state comes only from filesystem inspection, never empty tool output or an empty hash.
+The trust model excludes adversarial concurrent changes by the same UID or root.
+
+`--config` commands dispatch before effective connection parsing. Positional `config` remains a selector.
+Show reports both saved and effective state and resolves the CLI through PATH without invoking it.
+Set and reset do not need transport dependencies. All config-command failures bypass optional Sentry reporting.
+Ordinary connection and doctor failure reporting is unchanged.
+
+One per-user `$HOME/.config/tailmux/.config-lock` directory excludes concurrent writers.
+The writer arms cleanup immediately after successful lock acquisition, before further fallible work.
+Unknown existing locks and SIGKILL remnants remain fail-closed. There is no PID or stale-age unlock.
+New directories use a private umask. Mode `0600` staged data publishes by same-directory rename after content and metadata checks.
+Reads observe an old or complete new record and do not acquire the writer lock.
+Reset verifies a mode `0600` content backup beside the config before unlinking safe current-version data, including malformed data.
+Unknown versions, unsafe metadata, links, and oversized data refuse reset and set without discarding the original.
+Backup content comparison checks the producer exit status directly and does not rely on process substitution or digest output.
+Caught failures clean up the current writer's unpublished stage and lock when possible.
+Publication can complete before a later failure is reported. Shell traps do not promise power-loss durability.
+Lifecycle operations preserve config and hosts. Saved settings never require shell startup edits.
+See [daemon selection](usage.md#select-a-tailscale-daemon) for command and repair examples.
 
 The jq boundary requires exactly one JSON document and validates every visible peer.
 It bounds status to 8 MiB, peer count to 4,096, each address and key array to 64 entries, and each public-key record to 16 KiB.

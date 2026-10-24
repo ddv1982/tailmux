@@ -6,6 +6,7 @@ readonly TAILMUX_VERSION=0.2.3
 usage() {
   printf '%s\n' "tailmux $TAILMUX_VERSION" \
     'Usage: tailmux [user@]selector' '       tailmux doctor [[user@]selector]' \
+    '       tailmux --config show | set socket PATH | reset socket' \
     '       tailmux --help | --version' \
     'Selectors are known canonical peer names, advertised addresses, or declarative host aliases.' \
     'Set TAILMUX_TAILSCALE_SOCKET to an absolute socket path to select a daemon.' \
@@ -13,6 +14,7 @@ usage() {
 }
 report_failure() {
   local category=$1 line=$2 dsn=${TAILMUX_SENTRY_DSN:-} endpoint event_id environment release
+  [[ "${mode:-}" != config ]] || return 0
   # Report only fixed categories, never the diagnostic text or request data.
   case "$category" in
     missing-dependency|daemon-unavailable|invalid-schema|local-io) ;;
@@ -47,12 +49,233 @@ fail() {
   exit "${2:-1}"
 }
 
+socket_value_valid() {
+  [[ "$1" == /* && "$1" != *[[:cntrl:]]* ]]
+}
+
+config_location() {
+  [[ "${HOME:-}" == /* && "$HOME" != / && "$HOME" != */ && "$HOME" != *[[:cntrl:]]* &&
+    "$HOME" != *'/../'* && "$HOME" != */.. && "$HOME" != *'/./'* && "$HOME" != */. && "$HOME" != *'//'* ]] ||
+    fail 'invalid-config: HOME must be an absolute path without controls, dot components, or trailing slash' 2
+  config_dir=$HOME/.config/tailmux
+  config_file=$config_dir/config
+}
+
+config_metadata() {
+  local target=$1 kind=$2 component parent mode uid links size flags extra metadata listing line token previous='' index=0
+  local -a paths=("$target")
+  [[ ! -L "$target" ]] || return 1
+  if [[ "$kind" == file ]]; then [[ -f "$target" && -r "$target" ]] || return 1
+  else [[ -d "$target" ]] || return 1; fi
+  component=$target
+  while [[ "$component" != / ]]; do
+    component=${component%/*}
+    [[ -n "$component" ]] || component=/
+    [[ -d "$component" && ! -L "$component" ]] || return 1
+    paths+=("$component")
+  done
+  case "$OSTYPE" in
+    darwin*)
+      metadata=$(/usr/bin/stat -f '%u %p %l %z %f' "${paths[@]}") || return 1
+      listing=$(/bin/ls -lde "${paths[@]}") || return 1 ;;
+    linux*)
+      metadata=$(stat -c '%u %a %h %s 0' "${paths[@]}") || return 1
+      listing=$(ls -ld -- "${paths[@]}") || return 1 ;;
+    *) return 1 ;;
+  esac
+  while IFS= read -r line; do
+    IFS=' ' read -r uid mode links size flags extra <<< "$line"
+    [[ "$uid" =~ ^[0-9]{1,10}$ && "$mode" =~ ^[0-7]{1,8}$ && "$links" =~ ^[0-9]{1,10}$ &&
+      "$size" =~ ^[0-9]{1,18}$ && "$flags" =~ ^[0-9]{1,10}$ && -z "$extra" && $index -lt ${#paths[@]} ]] || return 1
+    parent=${paths[$index]}
+    if [[ $index == 0 && "$kind" == file ]]; then
+      [[ "$uid" == "$UID" && "$links" == 1 && "$flags" == 0 ]] && (( (8#$mode & 07777) == 0600 && size <= 8192 )) || return 1
+      config_size=$size
+    elif [[ "$parent" == "$HOME" || "$parent" == "$HOME/"* ]]; then
+      [[ "$uid" == "$UID" ]] && (( (8#$mode & 0022) == 0 )) || return 1
+    else
+      [[ "$uid" == "$UID" || "$uid" == 0 ]] &&
+        (( (8#$mode & 0022) == 0 || (uid == 0 && (8#$mode & 01000) != 0) )) || return 1
+    fi
+    index=$((index + 1))
+  done <<< "$metadata"
+  [[ $index == "${#paths[@]}" ]] || return 1
+  index=0
+  while IFS= read -r line; do
+    token=${line%% *}
+    # macOS home directories can carry this non-mutating ACL inherited from the OS.
+    if [[ "$OSTYPE" == darwin* && "$previous" == d* && "$line" == ' 0: group:everyone deny delete' ]]; then previous=''; continue; fi
+    [[ "$token" =~ ^[d-][rwxStTs-]{9}[@.]?$ ]] || {
+      [[ "$OSTYPE" == darwin* && "$token" =~ ^d[rwxStTs-]{9}\+$ ]] || return 1
+      [[ "$listing" == *$'\n 0: group:everyone deny delete'* ]] || return 1
+    }
+    previous=$token
+    index=$((index + 1))
+  done <<< "$listing"
+  [[ $index == "${#paths[@]}" ]]
+}
+
+config_snapshot() {
+  config_text=$(
+    head -c 8193 < "$1" | tr '\000' '\001'
+    status=$?
+    printf '\002'
+    exit "$status"
+  ) || return 1
+  config_text=${config_text%$'\002'}
+  [[ ${#config_text} == "$config_size" && ${#config_text} -le 8192 ]]
+}
+
+config_read() {
+  local record value has_nul=false
+  saved_socket=(unsafe '' "unsafe, linked, unreadable, oversized, or unverifiable data at $config_file")
+  if [[ ! -e "$config_file" && ! -L "$config_file" ]]; then
+    local ancestor=$config_dir
+    while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do
+      ancestor=${ancestor%/*}
+      [[ -n "$ancestor" ]] || ancestor=/
+    done
+    config_metadata "$ancestor" directory || return 1
+    saved_socket=(absent '' '')
+    return 0
+  fi
+  config_metadata "$config_file" file && config_snapshot "$config_file" || return 1
+  [[ "$config_text" != *$'\001'* ]] || has_nul=true
+  saved_socket=(unknown '' "unknown config version at $config_file; preserve it for inspection")
+  [[ "$config_text" == tailmux-config-v1 || "$config_text" == tailmux-config-v1$'\n'* ]] || return 1
+  saved_socket=(malformed '' "malformed current-version data at $config_file; repair with tailmux --config reset socket")
+  [[ "$has_nul" == false ]] || return 1
+  record=${config_text#*$'\n'}
+  [[ "$record" == socket=*$'\n' ]] || return 1
+  value=${record#socket=}
+  value=${value%$'\n'}
+  socket_value_valid "$value" || return 1
+  saved_socket=(valid "$value" '')
+}
+
+socket_selection() {
+  effective_socket='' effective_source='native default' selection_error=''
+  if [[ -n ${TAILMUX_TAILSCALE_SOCKET+x} ]]; then
+    effective_source=environment
+    effective_socket=$TAILMUX_TAILSCALE_SOCKET
+    socket_value_valid "$effective_socket" || {
+      selection_error='TAILMUX_TAILSCALE_SOCKET must be an absolute path without ASCII control bytes'
+      return 1
+    }
+  else
+    case "${saved_socket[0]}" in
+      valid) effective_socket=${saved_socket[1]}; effective_source=saved ;;
+      absent) ;;
+      *) effective_source=saved; selection_error=${saved_socket[2]}; return 1 ;;
+    esac
+  fi
+}
+
+config_cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "$config_stage" ]]; then rm -f "$config_stage" || status=1; fi
+  if [[ -n "$config_lock" ]]; then rmdir "$config_lock" || status=1; fi
+  exit "$status"
+}
+
+config_writer() {
+  local directory
+  for directory in "$HOME" "$HOME/.config" "$config_dir"; do
+    if [[ ! -e "$directory" && ! -L "$directory" ]]; then
+      config_metadata "${directory%/*}" directory || fail "invalid-config: unsafe config ancestor $directory" 2
+      (umask 077; mkdir "$directory") || [[ -d "$directory" && ! -L "$directory" ]] ||
+        fail "invalid-config: cannot create private directory $directory" 2
+    fi
+    config_metadata "$directory" directory || fail "invalid-config: unsafe config directory $directory" 2
+  done
+  config_stage='' config_lock=''
+  (umask 077; mkdir "$config_dir/.config-lock") || fail "invalid-config: writer locked or cannot acquire $config_dir/.config-lock; inspect it; no automatic unlock" 2
+  config_lock=$config_dir/.config-lock
+  trap config_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  config_metadata "$config_lock" directory || fail "invalid-config: cannot verify writer lock $config_lock" 2
+}
+
+config_show() {
+  local read_status=0 selection_status=0 cli
+  config_read || read_status=2
+  socket_selection || selection_status=2
+  cli=$(command -v tailscale) || cli=unavailable
+  printf 'Config file: %s\nSaved socket: %s\nSaved state: %s\n' "$config_file" "${saved_socket[1]:-unset}" "${saved_socket[0]}"
+  if [[ $selection_status == 0 ]]; then
+    printf 'Effective socket: %s\n' "${effective_socket:-Tailscale CLI default endpoint}"
+  else
+    printf 'Effective socket: invalid (%s)\n' "$selection_error"
+  fi
+  printf 'Source: %s\nPATH-selected CLI: %s\n' "$effective_source" "$cli"
+  if [[ "$effective_source" == environment ]]; then printf '%s\n' 'Environment overrides saved configuration, including after reset.'; fi
+  if [[ $read_status != 0 ]]; then printf '%s\n' "${saved_socket[2]}" >&2; fi
+  [[ $read_status == 0 && $selection_status == 0 ]]
+}
+
+config_command() {
+  local action=${2:-} value=${4:-} backup
+  case "$action" in
+    show) [[ $# == 2 ]] || fail 'invalid-request: use --config show' 2 ;;
+    set) [[ $# == 4 && "$3" == socket ]] || fail 'invalid-request: use --config set socket PATH' 2
+      if ! socket_value_valid "$value" || (( ${#value} + 26 > 8192 )); then
+        fail 'invalid-config: socket must be an absolute path without ASCII controls and fit the 8 KiB config limit' 2
+      fi ;;
+    reset) [[ $# == 3 && "$3" == socket ]] || fail 'invalid-request: use --config reset socket' 2 ;;
+    *) fail 'invalid-request: use --config show, --config set socket PATH, or --config reset socket' 2 ;;
+  esac
+  config_location
+  if [[ "$action" == show ]]; then config_show || exit 2; return; fi
+  config_writer
+  config_read || :
+  case "${saved_socket[0]}" in
+    absent|valid) ;;
+    malformed) [[ "$action" == reset ]] || fail "invalid-config: ${saved_socket[2]}" 2 ;;
+    *) fail "invalid-config: ${saved_socket[2]}" 2 ;;
+  esac
+  if [[ "$action" == set ]]; then
+    config_stage=$(umask 077; mktemp "$config_dir/.config-stage.XXXXXXXX") || fail "invalid-config: cannot stage $config_file" 2
+    [[ -n "$config_stage" && "$config_stage" == "$config_dir/.config-stage."* ]] || fail "invalid-config: invalid staging path for $config_file" 2
+    config_metadata "$config_stage" file || fail "invalid-config: unsafe stage $config_stage" 2
+    printf 'tailmux-config-v1\nsocket=%s\n' "$value" > "$config_stage" || fail "invalid-config: cannot write $config_stage" 2
+    if ! config_metadata "$config_stage" file || ! config_snapshot "$config_stage" ||
+      [[ "$config_text" != tailmux-config-v1$'\nsocket='"$value"$'\n' ]]; then
+      fail "invalid-config: cannot verify $config_stage" 2
+    fi
+    mv -f "$config_stage" "$config_file" || fail "invalid-config: cannot publish $config_file" 2
+    if ! config_read || [[ "${saved_socket[1]}" != "$value" || -e "$config_stage" || -L "$config_stage" ]]; then
+      fail "invalid-config: cannot verify published $config_file" 2
+    fi
+    config_stage=''
+    printf 'Saved socket: %s\n' "$value"
+  else
+    if [[ "${saved_socket[0]}" != absent ]]; then
+      backup=$(umask 077; mktemp "$config_dir/config.backup.XXXXXXXX") || fail "invalid-config: cannot create backup for $config_file" 2
+      [[ -n "$backup" && "$backup" == "$config_dir/config.backup."* ]] || fail "invalid-config: invalid backup path for $config_file" 2
+      config_metadata "$backup" file || fail "invalid-config: unsafe backup $backup; preserved $config_file" 2
+      if ! head -c 8193 < "$config_file" > "$backup" || ! config_metadata "$backup" file ||
+        ! cmp -s "$config_file" "$backup"; then
+        fail "invalid-config: cannot verify backup $backup; preserved $config_file" 2
+      fi
+      if ! rm "$config_file" || [[ -e "$config_file" || -L "$config_file" ]]; then
+        fail "invalid-config: cannot clear $config_file; backup $backup" 2
+      fi
+      printf 'Content backup: %s\n' "$backup"
+    fi
+    printf '%s\n' 'Saved socket: unset'
+    if [[ -n ${TAILMUX_TAILSCALE_SOCKET+x} ]]; then printf '%s\n' 'Environment override remains; unset TAILMUX_TAILSCALE_SOCKET to use the native default.'; fi
+  fi
+}
+
 mode=connect
 selector=''
 user=''
 case "${1:-}" in
   --help|-h) [[ $# == 1 ]] || fail 'invalid-request: help takes no arguments' 2; usage; exit 0 ;;
   --version|-V) [[ $# == 1 ]] || fail 'invalid-request: version takes no arguments' 2; printf 'tailmux %s\n' "$TAILMUX_VERSION"; exit 0 ;;
+  --config) mode=config; config_command "$@"; exit 0 ;;
   doctor) mode=doctor; shift ;;
 esac
 if [[ "$mode" == connect && $# != 1 || "$mode" == doctor && $# -gt 1 ]]; then
@@ -69,12 +292,17 @@ if [[ $# == 1 ]]; then
   [[ -n "$selector" && "$selector" != -* && "$selector" != *[!A-Za-z0-9.:_-]* ]] || fail 'invalid-request: invalid selector' 2
 fi
 
-if [[ -n ${TAILMUX_TAILSCALE_SOCKET+x} ]]; then
-  [[ "$TAILMUX_TAILSCALE_SOCKET" == /* && "$TAILMUX_TAILSCALE_SOCKET" != *[[:cntrl:]]* ]] ||
-    fail 'invalid-config: TAILMUX_TAILSCALE_SOCKET must be an absolute path without ASCII control bytes' 2
-  readonly -a tailscale_cmd=(tailscale "--socket=$TAILMUX_TAILSCALE_SOCKET")
-  readonly tailscale_endpoint="socket $TAILMUX_TAILSCALE_SOCKET; daemon executable unknown"
-  readonly tailscale_context=" (socket $TAILMUX_TAILSCALE_SOCKET)"
+saved_socket=(absent '' '')
+if [[ -z ${TAILMUX_TAILSCALE_SOCKET+x} ]]; then
+  config_location
+  config_read || fail "invalid-config: ${saved_socket[2]}" 2
+fi
+socket_selection || fail "invalid-config: $selection_error" 2
+readonly effective_socket effective_source
+if [[ "$effective_source" != 'native default' ]]; then
+  readonly -a tailscale_cmd=(tailscale "--socket=$effective_socket")
+  readonly tailscale_endpoint="socket $effective_socket; source $effective_source; daemon executable unknown"
+  readonly tailscale_context=" (socket $effective_socket; source $effective_source)"
 else
   readonly -a tailscale_cmd=(tailscale)
   readonly tailscale_endpoint='Tailscale CLI default endpoint; daemon executable unknown'

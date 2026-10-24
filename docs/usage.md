@@ -86,28 +86,83 @@ See [troubleshooting](troubleshooting.md) if the check fails.
 
 ## Select a Tailscale daemon
 
-Available in v0.2.3 and later.
-Tailmux uses the `tailscale` executable on your PATH and its default daemon selection.
+Environment selection is available in v0.2.3.
+The saved-setting commands below require the client from this checkout, installed through local `setup.sh`.
+The published v0.2.3 installer does not include those commands yet.
+Tailmux uses the `tailscale` executable on your PATH.
 On a Mac with both the Tailscale app and a separate CLI service, these can represent different devices.
+Use the socket path supplied by your Tailscale installation. No socket path is a universal default.
 
-To select a daemon, set `TAILMUX_TAILSCALE_SOCKET` to its absolute local socket path.
-For example, if your service uses `/var/run/tailscaled.socket`:
+To save your daemon selection across terminals and client updates, run:
 
 ```bash
-export TAILMUX_TAILSCALE_SOCKET=/var/run/tailscaled.socket
+"$HOME/.local/bin/tailmux" --config set socket /var/run/tailscaled.socket
+"$HOME/.local/bin/tailmux" --config show
 "$HOME/.local/bin/tailmux" doctor
-"$HOME/.local/bin/tailmux" doctor device-name
-"$HOME/.local/bin/tailmux" device-name
 ```
 
-Doctor shows the socket selection in its daemon row. The same selection applies to peer discovery and SSH.
-An unavailable selected daemon causes failure. Tailmux never retries another daemon.
-An empty or relative path is invalid. Quote paths that contain spaces.
-Use the socket path supplied by your Tailscale installation; the example is not a universal default.
+`show` prints the saved socket, effective socket, selection source, and PATH-selected CLI without invoking Tailscale.
+Doctor shows the selection source in its existing daemon row.
+The same socket applies to all version probes, peer discovery, and SSH.
+An unavailable selected daemon causes failure. Tailmux never retries another endpoint.
+Quote paths that contain spaces or shell punctuation. Paths remain literal data.
 
-Save the export in the startup file your shell loads to keep it across terminals and Tailmux updates.
-Run `unset TAILMUX_TAILSCALE_SOCKET` to restore Tailscale's default selection.
-Tailmux does not start, stop, or configure either service.
+An explicitly set `TAILMUX_TAILSCALE_SOCKET` overrides the saved socket.
+An empty, relative, or control-containing environment value fails before daemon access.
+For connections and doctor, a valid environment value bypasses the saved file, even when that file is malformed or unsafe.
+`--config show` also inspects saved state and reports file errors without invoking a daemon.
+For a temporary override, run:
+
+```bash
+TAILMUX_TAILSCALE_SOCKET=/var/run/another.socket "$HOME/.local/bin/tailmux" doctor
+```
+
+To remove the saved socket, run:
+
+```bash
+"$HOME/.local/bin/tailmux" --config reset socket
+unset TAILMUX_TAILSCALE_SOCKET
+```
+
+Reset leaves any environment override in effect and explains that in its output.
+With neither setting present, Tailmux uses the Tailscale CLI's native default endpoint.
+Set and reset never invoke Tailscale or perform network work, including optional error reporting on failure.
+All config commands dispatch before connection settings are validated, so an invalid override cannot block repair.
+Help and version also ignore configuration and dependencies. `tailmux config` remains a peer selector.
+
+Tailmux stores exactly two LF-terminated records in `$HOME/.config/tailmux/config`:
+
+```text
+tailmux-config-v1
+socket=/var/run/tailscaled.socket
+```
+
+The maximum file size is 8 KiB. The socket must be absolute and contain no ASCII control bytes.
+Extra records, unknown versions, NULs, missing final LF, and empty or relative values fail before daemon access.
+There is no shell evaluation, tilde expansion, or path splitting.
+Config and hosts retain their fixed HOME paths. `XDG_CONFIG_HOME` does not relocate them.
+
+Reads and writes refuse symlinked config files and ancestors, including user-owned dotfiles links.
+Manage those paths through your dotfiles owner before using saved settings.
+The config must be current-user owned, mode `0600`, regular, and have one hard link.
+Its HOME-side directories must be current-user owned and not group or other writable.
+Unknown or mutating ACLs cause refusal. The OS-provided macOS directory ACL that denies deletion is accepted.
+New directories are private. Existing safe directory permissions remain unchanged.
+
+If current-version data is malformed, inspect it with `--config show`, then use `--config reset socket`.
+Reset creates a mode `0600` `config.backup.*` beside the config and verifies identical content before clearing the setting.
+The backup preserves content only. Keep it for inspection, then save the correct socket again.
+Set refuses malformed data until reset succeeds.
+Unknown-version, linked, unsafe, unreadable, and oversized files remain untouched. The error identifies their path.
+
+One `.config-lock` directory serializes config writers.
+Caught failures and SIGTERM clean up the current writer's lock and unpublished stage when possible.
+SIGKILL can leave a lock. Tailmux never removes a lock by age or PID.
+An existing lock requires owner inspection after ensuring that no config writer remains active.
+Atomic publication keeps the previous or complete replacement config visible. A nonzero exit after publication can leave the new setting applied.
+No power-loss durability guarantee follows from shell traps.
+Installation, update, and uninstall preserve saved config and hosts.
+Tailmux never edits shell files for saved settings and does not start, stop, or configure services.
 
 ## Device selection
 

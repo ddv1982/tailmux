@@ -29,7 +29,7 @@ class Doctor(unittest.TestCase):
         self.version('1.104.2', '1.104.2')
         real_jq = shutil.which('jq')
         self.assertIsNotNone(real_jq, 'development test requires jq')
-        for name in ('bash', 'head', 'cat', 'mktemp', 'wc', 'tr', 'rm', 'rmdir'):
+        for name in ('bash', 'head', 'cat', 'mktemp', 'wc', 'tr', 'rm', 'rmdir', 'stat', 'ls'):
             executable = '/bin/bash' if name == 'bash' else shutil.which(name)
             self.assertIsNotNone(executable, name)
             (self.bin / name).symlink_to(executable)
@@ -128,7 +128,7 @@ exit 97
         socket = str(self.root / "daemon space 'quote' * ;$(touch marker).sock")
         rows = self.rows(self.run_doctor(TAILMUX_TAILSCALE_SOCKET=socket))
         self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\n')
-        self.assertEqual(rows['Tailscale daemon'][2], f'socket {socket}; daemon executable unknown')
+        self.assertEqual(rows['Tailscale daemon'][2], f'socket {socket}; source environment; daemon executable unknown')
         self.assertEqual(rows['Tailscale daemon'][3:6], ['1.104.2', '1.104.2', 'supported'])
         self.assertIn('multiple installations can select different daemons', rows['Tailscale daemon'][7])
         self.assertIn('TAILMUX_TAILSCALE_SOCKET', rows['Tailscale daemon'][7])
@@ -147,6 +147,29 @@ exit 97
         self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\ntailscale --socket={socket} version --json\n')
         self.assertEqual(rows['Tailscale CLI'][3:6], ['unknown', 'unknown', 'unknown'])
         self.assertEqual(rows['Tailscale daemon'][4:6], ['unknown', 'unknown'])
+
+    def test_saved_socket_provenance_and_failed_inspection(self):
+        config = self.home / '.config/tailmux/config'
+        config.parent.mkdir(parents=True, mode=0o700)
+        socket = '/saved space ü ;$(touch marker).sock'
+        config.write_bytes(f'tailmux-config-v1\nsocket={socket}\n'.encode())
+        config.chmod(0o600)
+        rows = self.rows(self.run_doctor())
+        self.assertEqual(rows['Tailscale daemon'][2], 'socket /saved space ?? ;$(touch marker).sock; source saved; daemon executable unknown')
+        self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\n')
+        self.trace.unlink()
+        rows = self.rows(self.run_doctor(DAEMON_EXIT='37'))
+        self.assertEqual(self.calls(), f'tailscale --socket={socket} version --daemon --json\ntailscale --socket={socket} version --json\n')
+        self.assertEqual(rows['Tailscale daemon'][4:6], ['unknown', 'unknown'])
+        self.assertIn('source saved', rows['Tailscale daemon'][2])
+        self.trace.unlink()
+        saved = self.run_doctor('work')
+        self.trace.unlink()
+        override = self.run_doctor('work', TAILMUX_TAILSCALE_SOCKET=socket)
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        self.assertEqual(saved.stdout, override.stdout)
+        self.assertEqual(json.loads(saved.stdout)['peerId'], 'nFixtureWork')
+        self.assertFalse((self.root / 'marker').exists())
 
     def test_vendor_builds_and_unreviewed_versions_are_unknown(self):
         for version in ('1.102.3-vendor-backport', '1.104.2-vendor', '1.106.0', '1.104.2-dev20261022'):
