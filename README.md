@@ -14,26 +14,34 @@ See [macOS build requirements](docs/compatibility.md) if you use the App Store o
 ## Install, update, or uninstall
 
 The installer needs trusted Python 3.11+, gh 2.103.0+, jq, and curl 8.4.0+.
-Run this as your normal user to install [v0.2.3](https://github.com/ddv1982/tailmux/releases/tag/v0.2.3):
+Run this as your normal user to install [v0.3.0](https://github.com/ddv1982/tailmux/releases/tag/v0.3.0):
 
 ```bash
 curl -qfsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 \
   --max-time 110 --max-redirs 5 --max-filesize 65536 \
-  https://raw.githubusercontent.com/ddv1982/tailmux/2f3ce686491905bc69160b32178f6bb3412735fd/install.sh |
+  https://raw.githubusercontent.com/ddv1982/tailmux/b0257201e238628ca7b55acc42d3d1edc795306e/install.sh |
 python3 -I -c 'import hashlib, os, subprocess, sys
 script = sys.stdin.buffer.read(65537)
-if hashlib.sha256(script).hexdigest() != "aff0a5a85f8d9d6b32ad6e5159ab19db4a04ec871b802484edca9c9e8b7d9c5f": sys.exit("Installer checksum mismatch.")
+if hashlib.sha256(script).hexdigest() != "0d9a39259a5dca865eb80e8721541984b39a1c4bd5d2616151463353152f4b0c": sys.exit("Installer checksum mismatch.")
 env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "ZDOTDIR") if k in os.environ}
 sys.exit(subprocess.run(["bash", "-s", "--", *sys.argv[1:]], input=script, env=env).returncode)
 ' install
 ```
 
 For updates or removal, replace `install` on the last line with `update` or `uninstall`.
-All three actions use the same [shell script](install.sh) and verify the signed release package. No GitHub login is needed.
-Updates currently target v0.2.3; use the updated README command when a newer release is published.
+All actions verify the signed release package. No GitHub login is needed.
 
 The client is installed at `~/.local/bin/tailmux`. Setup adds no PATH entry or shell code.
-See [installation options and migration](docs/usage.md#install-update-and-uninstall) for custom paths, local setup, and backups.
+See [installation options](docs/usage.md#install-update-and-uninstall) for custom paths and local setup.
+For a modified client or interrupted update, follow the [recovery guide](docs/troubleshooting.md#recover-a-modified-client).
+
+If you need a specific Tailscale daemon, save the socket supplied by your installation:
+
+```bash
+"$HOME/.local/bin/tailmux" --config set socket /var/run/tailscaled.socket
+```
+
+That example path is not a universal default. [Daemon selection](docs/usage.md#select-a-tailscale-daemon) explains overrides and reset.
 
 ## Connect
 
@@ -45,7 +53,6 @@ Check local dependencies, then connect using your destination's Tailscale name:
 ```
 
 Use `user@device-name` if the destination account differs from your local username.
-If you run multiple Tailscale installations, [select the intended daemon](docs/usage.md#select-a-tailscale-daemon) once for diagnostics and connections.
 For connection errors, see [troubleshooting](docs/troubleshooting.md).
 
 ## Documentation

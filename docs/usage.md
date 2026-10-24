@@ -4,87 +4,44 @@ Install the client, prepare the destination once, then connect by device name.
 
 ## Install, update, and uninstall
 
-The verified shell entrypoint in the README accepts `install`, `update`, or `uninstall`.
-It authenticates the pinned release installer and package before running the packaged setup code.
-No GitHub login or repository checkout is required. All three actions need network access and the installer prerequisites listed in the README.
-This entrypoint currently targets v0.2.3. Obtain an updated command from the trusted README when a newer release is available.
+The verified README command authenticates the pinned installer and package before running setup.
+For update or removal, replace the final line's `install` with `update` or `uninstall`.
+Append `--prefix /absolute/path/bin` for a custom binary directory.
+All public actions, including recovery preview and configuration, require network access and the README's trusted installer tools.
+Help is offline.
+
+The following replacement, recovery, and saved-setting behavior requires v0.3.0.
 
 `install` creates the executable and ownership receipt in `~/.local/bin`.
-Repeating installation of the same version is supported. It refuses to replace a different version; use `update` for that.
-`update` verifies the replacement first, backs up and removes a different receipt-owned client, then installs the pinned release.
-Repeating `update` on the same version preserves the existing installation.
-`uninstall` verifies ownership, backs up the executable and receipt, and removes those owned files.
-Repeating uninstall is supported.
+Repeating the same installation is supported. Use `update` to replace a different unchanged receipt-owned version.
+`update` uses the shared replacement operation under one lifecycle lock, with a verified backup of the previous executable and receipt.
+It never removes the executable first. A same-source update makes no changes or extra backups.
+A fresh prefix or a valid same-source receipt without an executable uses ordinary installation.
+`uninstall` verifies ownership, backs up the executable and receipt, and removes only those owned files and recognized legacy shell blocks.
+Repeating uninstall is supported. Settings, hosts, aliases, unrelated shell content, and backups remain.
 
-A failed update can leave a protected backup and an incomplete installation. Resolve the reported error and retry; see [lifecycle troubleshooting](troubleshooting.md#resolve-lifecycle-refusals).
-Modified files, foreign files, ambiguous ownership, unsafe destinations, and unknown locks cause refusal.
-Dependencies, networking identity, unmanaged shell configuration, aliases, and backups remain under their existing owners.
-
-For a trusted local checkout, installation and removal also work offline:
-
-```bash
-bash setup.sh install
-bash setup.sh uninstall
-```
-
-For a custom binary directory, append `--prefix /absolute/path/bin` to the downloaded entrypoint's action, or to local setup.
-Setup adds no PATH entry or shell code. The absolute executable path works without changing your shell.
-To use bare `tailmux` in your current Bash or Zsh session, run:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-To keep this PATH entry across terminals, save that line in the startup file your shell loads.
-An existing alias or loaded function can still shadow the executable. Use the absolute path while you inspect your shell configuration.
-Install and update dependencies through their package owners.
+A caught replacement failure attempts verified rollback. An interrupted rollback or SIGKILL can leave a pending transaction.
+Modified or foreign files, unsafe destinations, and unknown locks cause refusal.
+Follow the [recovery guide](troubleshooting.md#recover-a-modified-client) for preview, exact-digest approval, backups, and transaction maintenance.
 
 ## Recover a modified client from a reviewed checkout
 
-These recovery and configuration commands require this reviewed local checkout.
-The published v0.2.3 installer does not expose them.
-Review the checkout separately. Local source paths and content digests do not establish publisher authenticity.
-
-If an older client embeds a socket workaround, supply the intended socket explicitly through the candidate:
+From an independently reviewed local checkout, these alternatives work offline:
 
 ```bash
+bash setup.sh install
+bash setup.sh install --replace-owned --prefix "$HOME/.local/bin"
+bash setup.sh uninstall
 bash setup.sh configure --socket /var/run/tailscaled.socket
-```
-
-This command runs the checkout's `bin/tailmux --config set socket` handler.
-It never runs the installed client or creates an installation prefix.
-Use the socket supplied by your installation. The example path is not a universal default.
-Configuration is a separate completed operation. Executable rollback does not undo it.
-
-Preview the destination without changing any installation, configuration, or shell files:
-
-```bash
 bash setup.sh recover --prefix "$HOME/.local/bin" --dry-run
 ```
 
-The preview shows the installation classification, prefix, observed current digest, receipt's expected executable digest, candidate version and content digest, and local source path.
-It also shows the effective configuration and its source through the candidate's offline handler.
-The backup destination ends with `.tailmux-backup.XXXXXX`. Its random basename is chosen only during application.
-Unsafe, foreign, pending, or locked installations require inspection before proceeding.
-Malformed configuration remains a separate repair boundary.
+Use ordinary local `install` for a fresh prefix or receipt-only recovery.
+Local `configure` and recovery use the checkout's candidate, never the installed old wrapper.
+Review that source independently. A local path or receipt alone does not establish publisher authenticity.
 
-For a modified regular executable with a structurally valid path-bound receipt, approve the exact observed digest:
-
-```bash
-bash setup.sh recover --prefix "$HOME/.local/bin" --expect-current-sha256 LOWER64HEX
-```
-
-Replace `LOWER64HEX` with the 64 lowercase hexadecimal characters printed by preview.
-Recovery rechecks the executable, receipt, and metadata under the lifecycle lock before staging and replacement.
-A changed digest causes refusal. Missing or malformed receipts remain foreign and require a different prefix or manual inspection.
-There is no force-overwrite option.
-
-Recovery preserves and verifies the exact executable and receipt in a private backup under the prefix.
-The backup preserves content only and is local history, not an authenticated old release.
-Recovery never executes or parses the old wrapper, infers a socket, changes its receipt to bless old bytes, or edits shell startup files.
-A repeat after the candidate and receipt are already installed makes no changes or duplicate backups, even with the original approval digest.
-For a different unchanged owned version, use local `install --replace-owned`.
-See [pending transaction recovery](troubleshooting.md#resume-or-roll-back-a-recognized-pending-transaction) for interrupted operations.
+Setup adds no PATH entry or shell code. Use the printed absolute executable path if an alias or loaded function shadows `tailmux`.
+Install and update dependencies through their existing package owners.
 
 ## Prepare the destination
 
@@ -133,9 +90,10 @@ See [troubleshooting](troubleshooting.md) if the check fails.
 
 ## Select a Tailscale daemon
 
-Environment selection is available in v0.2.3.
-The saved-setting commands below require the client from this checkout, installed through local `setup.sh`.
-The published v0.2.3 installer does not include those commands yet.
+Environment selection is available in v0.2.3. Saved-setting commands require the v0.3.0 client.
+Before installation or recovery, the v0.3.0 public adapter also accepts `configure --socket ABS_SOCKET` as the README command's final arguments.
+It authenticates the package and runs its own candidate handler without creating an installation prefix.
+Public configuration needs network access. Installed `--config` commands remain offline.
 Tailmux uses the `tailscale` executable on your PATH.
 On a Mac with both the Tailscale app and a separate CLI service, these can represent different devices.
 Use the socket path supplied by your Tailscale installation. No socket path is a universal default.
@@ -154,7 +112,8 @@ The same socket applies to all version probes, peer discovery, and SSH.
 An unavailable selected daemon causes failure. Tailmux never retries another endpoint.
 Quote paths that contain spaces or shell punctuation. Paths remain literal data.
 
-An explicitly set `TAILMUX_TAILSCALE_SOCKET` overrides the saved socket.
+For the installed runtime and reviewed local setup, an explicitly set `TAILMUX_TAILSCALE_SOCKET` overrides the saved socket.
+The public adapter clears environment overrides before invoking authenticated setup. Its recovery preview describes that scrubbed context.
 An empty, relative, or control-containing environment value fails before daemon access.
 For connections and doctor, a valid environment value bypasses the saved file, even when that file is malformed or unsafe.
 `--config show` also inspects saved state and reports file errors without invoking a daemon.

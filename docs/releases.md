@@ -2,9 +2,28 @@
 
 Tailmux supports a no-checkout direct installer for macOS and Linux. The README's short command downloads `install.sh` from an exact commit and checks its independently pinned SHA-256 before passing the verified bytes to Bash. Obtain that command through a channel you trust. Its literals are the first trust boundary. A compromised command distribution channel can replace those expectations.
 
-The shell entrypoint pins v0.2.3, release source `0d109df952d45dede3c91647455ca0f6da3c2204`, the signing workflow, and certificate publisher IDs. It is distributed in a later commit; the release tag and signed assets remain at the original source. A subsequent README commit pins the shell entrypoint's exact commit and digest, so neither the script nor the release needs to contain its own future commit SHA.
+The shell entrypoint pins v0.3.0 and release source S, `877f8ffedacb68c8f78d0ce38ed506a4456d96ab`.
+The README pins the later installer commit and its exact checksum.
+Do not merge new public pins until the exact new installer and archive independently authenticate.
 
-The short command bounds HTTPS downloads and hashes the complete script in memory before any downloaded shell code runs. Python runs in isolated mode and launches Bash with only PATH, HOME, optional TMPDIR, and optional ZDOTDIR. The shell entrypoint then applies the private-staging and standard attestation checks below. It accepts install, update, and uninstall actions, plus an optional absolute prefix. All actions authenticate and validate the package before invoking its existing lifecycle writer. Update removes a different owned client only after the replacement passes authentication; removal retains a protected backup. The entrypoint currently selects v0.2.3 rather than discovering a mutable latest release.
+Distribution has three distinct commits. S contains the reviewed runtime, setup, release tools, and workflows.
+A later installer commit I contains `install.sh` with the literal tag and S.
+Only after I exists can descendant README commit D pin I's exact SHA and the SHA-256 of its `install.sh` blob.
+Neither I nor D changes the runtime or setup bytes from S. Never invent a future commit ID or publish mismatched URL and checksum pins.
+Keep I and D together in an unmerged distribution PR until publication, independent asset authentication, and complete-head checks pass.
+
+The short command hashes the bounded script in memory before downloaded shell code runs.
+Python uses isolated mode and launches Bash with only PATH, HOME, optional TMPDIR, and optional ZDOTDIR.
+The adapter preserves that scrubbed context for packaged setup and forwards values as literal Bash array arguments.
+It accepts `install`, `update`, and `uninstall` with an optional absolute prefix, recovery preview or exact-digest approval, guarded transaction maintenance, and `configure --socket ABS_SOCKET` without a prefix.
+Help is offline. Every other public action authenticates the installer and archive before setup or archive parsing.
+Installed runtime configuration commands remain offline.
+
+Public update delegates to canonical `install --replace-owned` for an existing regular client.
+Setup revalidates ownership under one lifecycle lock and retains a verified content backup. It never removes the executable first.
+An absent executable, including valid same-source receipt-only recovery, uses ordinary install. Same-source update is a no-op.
+Modified or foreign contents still refuse normal update and uninstall. See the [recovery guide](troubleshooting.md#recover-a-modified-client).
+There is no latest lookup or additional release request.
 
 ## Install from authenticated release assets
 
@@ -14,7 +33,7 @@ The block refuses root and unsupported platforms. Before downloads, it validates
 
 Trusted gh authenticates the installer before Python executes it. Successful verifier JSON must be a nonempty array. Every result's `verificationResult.signature.certificate` must contain string `sourceRepositoryIdentifier` equal to `1144643418` and string `sourceRepositoryOwnerIdentifier` equal to `240215896`. Missing, null, numeric, mixed, and wrong IDs fail. These fields come from successful standard verification, not the workflow-controlled predicate or raw bundle.
 
-The authenticated installer downloads exactly `tailmux-TAG.tar.gz`. It authenticates a private archive snapshot with the same constraints before gzip or archive parsing. It then invokes the packaged local `setup.sh` with a clean subprocess environment. Setup retains ownership of destination safety, locking, receipts, retries, and legacy shell-block migration. It installs only the user-owned executable and receipt. It adds no PATH code, provisions no dependencies, and uses no sudo. A different installed version requires the existing reviewed uninstall procedure before replacement.
+The adapter downloads exactly three release assets per successful invocation, the versioned installer, standard bundle, and `tailmux-TAG.tar.gz`. The authenticated installer verifies a private archive snapshot with the same constraints before gzip or archive parsing. The adapter then invokes packaged `setup.sh` with its scrubbed environment and validated literal request. Setup retains ownership of destination safety, locking, receipts, retries, and legacy shell-block migration. It installs only the user-owned executable and receipt. It adds no PATH code, provisions no dependencies, and uses no sudo. A different unchanged receipt-owned version uses the shared replacement operation. Recovery and configuration also delegate only to the authenticated package's setup, never the installed executable.
 
 The three release assets are `tailmux-TAG-installer.py`, `tailmux-TAG.tar.gz`, and `tailmux-TAG.sigstore.json`. The installer is the exact committed bytes of `scripts/release/package.py`. The archive and installer are explicit subjects of the pinned standard attestation action. The bundle is copied unchanged from that action's `bundle-path` output.
 
@@ -102,14 +121,14 @@ The unprivileged job reads environment protections, active main rules, tag-prese
 
 The publisher repeats every check after owner approval. It refuses a changed expected source, captured main, or waiver bytes. Both jobs bind the tag push, hosted runner, event SHA, workflow SHA and ref, checkout HEAD, peeled tag, independent S, and source ancestry to captured main. It never dispatches from main and checks out another source. It then builds exact subjects, attests them, copies the standard bundle, and publishes all three explicit assets with `--verify-tag --prerelease=false --latest`. Release-exists failures require owner inspection. There is no overwrite or delete-and-republish automation.
 
-After S exists, generate its literal install block from trusted source tools:
+The trusted source generator can render the longer direct-asset command below. It does not produce the short README URL and checksum pins for future I. Keep the README block unchanged until the actual installer commit exists:
 
 ```sh
 python3 scripts/release/package.py bootstrap-command \
   --tag v0.3.0 --source-sha INDEPENDENTLY_REVIEWED_SOURCE_SHA > /private/install-command.sh
 ```
 
-Review the output and add it only in documentation descendant D or another separately reviewed distribution channel. The generator validates explicit inputs. It does not discover or authenticate the expected source for the operator.
+The generator validates explicit tag and source inputs. It does not discover or authenticate them. For the short README command, the parent release owner creates I first, reads its exact committed `install.sh` blob, then records its real SHA and digest in D. Final checks must fetch and verify that actual pin chain separately from private fixtures.
 
 ## Check the infrastructure locally
 
@@ -126,9 +145,9 @@ Pinned actions disable persisted checkout credentials. The publisher disables re
 
 ## Recover an installation
 
-Stop using a faulty candidate. Use its reviewed uninstall path to remove receipt-owned client files while preserving configuration. Networking identity, daemons, packages, server settings, and tailnet policy remain with their operators.
+Stop using a faulty candidate. Use the [recovery guide](troubleshooting.md#recover-a-modified-client) to inspect a modified or pending installation and preserve its verified backups. Use reviewed uninstall only when ownership remains valid. Networking identity, daemons, packages, server settings, and tailnet policy remain with their operators.
 
-There is no previous authenticated operational artifact recorded in this source. Restore an earlier release only when it exists, independently matches its expected identity, and passes the same verification. Otherwise use a reviewed recovery checkout with connections disabled until recovery is accepted. Recovery must preserve fail-closed resolution, the single Tailscale SSH transport, and operator-owned provisioning.
+Restore an earlier release only when it exists, independently matches its expected identity, and passes the same verification. Otherwise use a reviewed recovery checkout with connections disabled until recovery is accepted. Recovery must preserve fail-closed resolution, the single Tailscale SSH transport, and operator-owned provisioning.
 
 ## Source contracts
 
