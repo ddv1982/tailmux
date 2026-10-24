@@ -107,50 +107,107 @@ A failed migration can leave the verified executable installed and some recogniz
 The error remains nonzero. Retry after resolving the reported cause.
 No lifecycle failure is reported as complete.
 
+## Recover a modified client
+
+The public recovery interface requires the v0.3.0 adapter. Its assets are not yet published.
+The current README command still selects v0.2.3. Use an independently reviewed local checkout until the release owner publishes the new verified command.
+
+With the v0.3.0 verified README command, replace `install` on its last line with the arguments shown below.
+Keep every download and checksum-verification line unchanged. Each invocation authenticates the pinned installer and package before running packaged setup.
+Help is offline. Public recovery preview, recovery application, and configuration need network access.
+
+If the old client contains a socket workaround, save the intended socket explicitly before replacement:
+
+```text
+configure --socket /var/run/tailscaled.socket
+```
+
+Use the socket supplied by your Tailscale installation. The example path is not a universal default.
+Configuration works before installation, accepts no prefix, and runs only the authenticated package's candidate handler.
+It never executes the installed old wrapper or creates an executable prefix.
+Configuration is a separate operation. Executable rollback does not undo it.
+
+Preview without changing the installation, saved settings, or shell files:
+
+```text
+recover --prefix "$HOME/.local/bin" --dry-run
+```
+
+The preview prints the classification, absolute prefix, observed current executable SHA256, receipt's expected executable digest, candidate version and digest, and extracted source path.
+The public adapter establishes publisher authenticity before that local setup preview runs.
+The preview's own local-content disclaimer describes the setup layer alone.
+Its effective socket and provenance come from the candidate's scrubbed environment. Public commands do not inherit `TAILMUX_TAILSCALE_SOCKET`.
+The [installed runtime's environment precedence](usage.md#select-a-tailscale-daemon) applies when you run that runtime directly.
+Malformed configuration needs separate inspection or explicit repair. Recovery preserves it.
+
+An absent prefix uses ordinary `install`. A valid receipt without an executable can be retried only with the same source and prefix.
+An unchanged receipt-owned executable uses `update`, which shares the canonical replacement operation under one lifecycle lock.
+A safe modified executable with a valid path-bound receipt needs exact-digest approval.
+Missing or malformed receipts establish no ownership. Foreign content, unsafe metadata, links, FIFOs, and unknown locks remain protected.
+There is no force-overwrite option.
+
+For a modified client, replace `LOWER64HEX` with the exact 64 lowercase hexadecimal characters from the preview:
+
+```text
+recover --prefix "$HOME/.local/bin" --expect-current-sha256 LOWER64HEX
+```
+
+Recovery rechecks the executable, receipt, and metadata under the lifecycle lock. A changed digest causes refusal.
+It saves and verifies the exact modified executable and original receipt under a private `.tailmux-backup.*` directory in the prefix.
+The preview's `.tailmux-backup.XXXXXX` suffix is a pattern. Setup chooses its random name only during application.
+These backups preserve content only. They record local history and do not authenticate an old release.
+Recovery never parses the old wrapper, infers its socket, rewrites its receipt to authorize old bytes, or edits shell startup files.
+Repeating application after the candidate and receipt are installed makes no changes or duplicate backups, even with the original approval digest.
+
+Local alternatives use the same reviewed source and writer:
+
+```bash
+bash setup.sh configure --socket /var/run/tailscaled.socket
+bash setup.sh recover --prefix "$HOME/.local/bin" --dry-run
+bash setup.sh recover --prefix "$HOME/.local/bin" --expect-current-sha256 LOWER64HEX
+```
+
+Local setup is offline and needs independent source review. A receipt or local digest does not establish publisher authenticity.
+
 ## Replace an unchanged owned client from a reviewed checkout
 
-Use the local replacement option with the same absolute prefix as the existing installation:
+The v0.3.0 public `update` action authenticates the package, then uses this shared replacement operation for an existing regular owned client:
 
 ```bash
 /bin/bash setup.sh install --replace-owned --prefix "$HOME/.local/bin"
 ```
 
-This option requires an existing regular executable whose bytes match its valid receipt.
-It does not inspect or migrate RC files. Unknown legacy blocks or an unrelated ZDOTDIR do not block replacement.
-Keep using ordinary `install` for a fresh prefix or receipt-only recovery.
-The public installer and its `update` action have not changed to this local replacement path.
+The executable must match its valid receipt. Replacement skips RC inspection and migration.
+Unknown legacy blocks or an unrelated ZDOTDIR do not block replacement.
+Use ordinary `install` for a fresh prefix or receipt-only recovery.
+Same-source update is a no-op. Successful replacement retains a private `.tailmux-backup.*` containing the previous executable and receipt.
+Keep that backup until you have checked the new client. Settings, hosts, aliases, and unrelated shell files remain unchanged.
 
-Successful replacement retains a private `.tailmux-backup.*` directory containing the previous executable and receipt.
-Check the printed absolute executable path and retain that backup until you have checked the new client.
-The receipt proves local bookkeeping, not publisher authenticity. Review or authenticate the candidate separately.
-
-If replacement fails, read the nonzero result and rollback message.
 A caught publication failure or SIGTERM attempts to restore both previous files from verified backups.
 If rollback cannot complete, or SIGKILL interrupts replacement, preserve `.tailmux-transaction`, its named stage and backup, and `.tailmux-install-lock/owner`.
-The error identifies a recognized pending transaction by ID. Install, replacement, and uninstall refuse it without further changes.
-Do not delete a lock, rewrite a receipt, or rerun publication by hand to bypass that refusal.
-The reviewed local setup provides [explicit transaction maintenance](#resume-or-roll-back-a-recognized-pending-transaction).
-Malformed records, mismatched digests, symlinks, and special files require owner inspection and remain untouched.
+The error identifies a recognized pending transaction by ID. Ordinary install, replacement, and uninstall refuse it.
+Do not delete a lock, rewrite a receipt, or publish files by hand to bypass that refusal.
+Malformed records, mismatched digests, symlinks, and special files require owner inspection.
 
 An interruption after transaction removal can leave a completed owned client and its owner lock without a transaction record.
-All lifecycle commands still refuse that lock. Preserve the lock, stage, and backups for owner inspection.
-A recovery procedure that requires a recognized pending transaction does not apply when its record is absent.
+Preserve the lock, stage, and backups for owner inspection. Transaction maintenance cannot validate a missing record.
 
 ## Resume or roll back a recognized pending transaction
 
-Use this reviewed local checkout. The published v0.2.3 adapter does not expose recovery commands.
-First inspect the read-only preview and preserve the transaction, stage, backup, and lock:
+Use the v0.3.0 verified README command and replace `install` on its last line with the arguments below.
+For an independently reviewed offline checkout, prepend `bash setup.sh` to each argument line instead.
+First preserve the transaction, stage, backup, and lock, then read the preview:
 
-```bash
-bash setup.sh recover --prefix "$HOME/.local/bin" --dry-run
+```text
+recover --prefix "$HOME/.local/bin" --dry-run
 ```
 
 Copy the exact recognized transaction ID and observed current executable SHA256.
 These values refer to the current public executable, which may already be the candidate after an interrupted rename.
 If the lifecycle lock remains, confirm that no writer is active before releasing it explicitly:
 
-```bash
-bash setup.sh recover --prefix "$HOME/.local/bin" --unlock-abandoned --transaction ID --expect-current-sha256 LOWER64HEX
+```text
+recover --prefix "$HOME/.local/bin" --unlock-abandoned --transaction ID --expect-current-sha256 LOWER64HEX
 ```
 
 `--unlock-abandoned` is your assertion that no lifecycle writer remains active.
@@ -160,14 +217,14 @@ Unknown, malformed, recordless, and completed-cleanup locks require owner inspec
 
 After unlocking, choose one operation with the current digest and the same transaction ID:
 
-```bash
-bash setup.sh recover --prefix "$HOME/.local/bin" --resume --transaction ID --expect-current-sha256 LOWER64HEX
-bash setup.sh recover --prefix "$HOME/.local/bin" --rollback --transaction ID --expect-current-sha256 LOWER64HEX
+```text
+recover --prefix "$HOME/.local/bin" --resume --transaction ID --expect-current-sha256 LOWER64HEX
+recover --prefix "$HOME/.local/bin" --rollback --transaction ID --expect-current-sha256 LOWER64HEX
 ```
 
 Both operations acquire the ordinary lock and recheck the record and artifacts.
-Resume requires the staged candidate to match this checkout's actual candidate bytes.
-If candidates differ, use the matching reviewed checkout or explicitly roll back.
+Resume requires the staged candidate to match the authenticated package or reviewed local candidate.
+If candidates differ, use the matching authenticated release or reviewed checkout, or explicitly roll back.
 A refused resume guard does not trigger implicit rollback.
 Rollback restores the verified previous local content and receipt. It does not authenticate that history or change saved configuration.
 Wrong IDs, changed current digests, third-party public bytes, or mismatched artifacts cause refusal and preserve the evidence.

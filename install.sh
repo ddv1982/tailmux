@@ -2,21 +2,79 @@
 env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" ZDOTDIR="${ZDOTDIR:-$HOME}" bash -s -- "$@" <<'TAILMUX_INSTALL'
 set -euo pipefail
 umask 077
-tag=v0.2.3
-source_sha=0d109df952d45dede3c91647455ca0f6da3c2204
+tag=v0.3.0
+source_sha=877f8ffedacb68c8f78d0ce38ed506a4456d96ab
 action=${1:-install}
 if [[ $# -gt 0 ]]; then shift; fi
 fail() { printf 'Tailmux setup rejected: %s\n' "$1" >&2; exit 1; }
 case "$action" in
-  install|update|uninstall) ;;
-  --help|-h) printf '%s\n' 'Usage: bash install.sh [install|update|uninstall] [--prefix /absolute/bin/directory]'; exit 0 ;;
-  *) fail 'Expected install, update, or uninstall.' ;;
+  install|update|uninstall|recover|configure) ;;
+  --help|-h)
+    [[ $# == 0 ]] || fail 'Help takes no options.'
+    printf '%s\n' \
+      'Usage: bash install.sh [install|update|uninstall] [--prefix ABS]' \
+      '       bash install.sh recover [--prefix ABS] --dry-run' \
+      '       bash install.sh recover [--prefix ABS] --expect-current-sha256 LOWER64HEX' \
+      '       bash install.sh recover [--prefix ABS] --resume|--rollback|--unlock-abandoned --transaction ID --expect-current-sha256 LOWER64HEX' \
+      '       bash install.sh configure --socket ABS_SOCKET' \
+      '--unlock-abandoned asserts that no lifecycle writer remains active.'
+    exit 0 ;;
+  *) fail 'Expected install, update, uninstall, recover, or configure.' ;;
 esac
 prefix="$HOME/.local/bin"
-if [[ $# -gt 0 ]]; then
-  [[ $# == 2 && $1 == --prefix ]] || fail 'Expected --prefix /absolute/bin/directory.'
-  prefix=$2
-fi
+prefix_seen=false
+recovery=(apply '' '')
+recovery_action_seen=false
+socket=''
+socket_seen=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prefix)
+      [[ "$action" != configure && $# -ge 2 && "$prefix_seen" == false ]] || fail 'Expected one lifecycle prefix.'
+      prefix=$2
+      prefix_seen=true
+      shift 2 ;;
+    --dry-run|--resume|--rollback|--unlock-abandoned)
+      [[ "$action" == recover && "$recovery_action_seen" == false ]] || fail 'Expected one recovery operation.'
+      recovery[0]=${1#--}
+      recovery_action_seen=true
+      shift ;;
+    --expect-current-sha256|--transaction)
+      [[ "$action" == recover && $# -ge 2 ]] || fail 'Expected a recovery value.'
+      if [[ "$1" == --transaction ]]; then field=2; else field=1; fi
+      [[ -z "${recovery[$field]}" && -n "$2" ]] || fail 'Duplicate or empty recovery value.'
+      recovery[field]=$2
+      shift 2 ;;
+    --socket)
+      [[ "$action" == configure && $# -ge 2 && "$socket_seen" == false ]] || fail 'Expected one configuration socket.'
+      socket=$2
+      socket_seen=true
+      shift 2 ;;
+    *) fail 'Unknown or incompatible option.' ;;
+  esac
+done
+validate_request() {
+  local LC_ALL=C id
+  if [[ "$action" == configure ]]; then
+    [[ "$socket_seen" == true && "$socket" == /* && ! "$socket" =~ [[:cntrl:]] && ${#socket} -le 8166 ]] || fail 'Expected an absolute socket without control bytes within the config limit.'
+  else
+    [[ "$prefix" == /* && ! "$prefix" =~ [[:cntrl:]] ]] || fail 'Expected an absolute prefix without control bytes.'
+    case "/$prefix/" in */./*|*/../*) fail 'Prefix dot components are refused.' ;; esac
+  fi
+  if [[ "$action" == recover ]]; then
+    case "${recovery[0]}" in
+      dry-run) [[ -z "${recovery[1]}${recovery[2]}" ]] || fail 'Preview takes no approval or transaction.' ;;
+      apply) [[ -z "${recovery[2]}" ]] || fail 'Transaction requires a maintenance operation.' ;;
+      *)
+        id=${recovery[2]}
+        [[ ${#id} -ge 1 && ${#id} -le 96 && "$id" != . && "$id" != .. && "$id" != *[!a-zA-Z0-9._-]* ]] || fail 'Invalid transaction ID.' ;;
+    esac
+    if [[ "${recovery[0]}" != dry-run ]]; then
+      [[ "${recovery[1]}" =~ ^[a-f0-9]{64}$ ]] || fail 'Expected a lowercase current SHA256.'
+    fi
+  fi
+}
+validate_request
 case "$(uname -s)" in Darwin|Linux) ;; *) fail 'Only macOS and Linux are supported.' ;; esac
 for tool in python3 gh jq curl; do command -v "$tool" >/dev/null || fail "Required trusted tool missing: $tool"; done
 python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else "Python 3.11 or later is required.")'
@@ -103,15 +161,24 @@ archive="tailmux-${tag}.tar.gz"
 fetch "$archive" 8388608
 verified=$(python3 -I "$private/$asset" verify "$private/$archive" \
   --tag "$tag" --source-sha "$source_sha" --bundle "$private/$bundle" --output-parent "$private")
-if [[ $action == update ]]; then
-  if [[ -e "$prefix/tailmux" || -L "$prefix/tailmux" ]]; then
-    [[ -f "$prefix/tailmux" && ! -L "$prefix/tailmux" ]] || fail 'Existing client must be a regular, non-symlinked file.'
-  fi
-  if [[ -e "$prefix/tailmux" || -L "$prefix/tailmux" || -e "$prefix/.tailmux-receipt" || -L "$prefix/.tailmux-receipt" ]] &&
-     ! cmp -s "$prefix/tailmux" "$verified/bin/tailmux"; then
-    bash "$verified/setup.sh" uninstall --prefix "$prefix"
-  fi
-  action=install
-fi
-bash "$verified/setup.sh" "$action" --prefix "$prefix"
+request=("$action" --prefix "$prefix")
+case "$action" in
+  update)
+    request=(install --prefix "$prefix")
+    if [[ -e "$prefix/tailmux" || -L "$prefix/tailmux" ]]; then
+      [[ -f "$prefix/tailmux" && ! -L "$prefix/tailmux" ]] || fail 'Existing client must be a regular, non-symlinked file.'
+      request+=(--replace-owned)
+    fi ;;
+  configure) request=(configure --socket "$socket") ;;
+  recover)
+    if [[ "${recovery[0]}" == dry-run ]]; then
+      request+=(--dry-run)
+    else
+      request+=(--expect-current-sha256 "${recovery[1]}")
+      if [[ "${recovery[0]}" != apply ]]; then
+        request+=("--${recovery[0]}" --transaction "${recovery[2]}")
+      fi
+    fi ;;
+esac
+bash "$verified/setup.sh" "${request[@]}"
 TAILMUX_INSTALL
