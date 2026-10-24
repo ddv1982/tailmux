@@ -39,6 +39,53 @@ To keep this PATH entry across terminals, save that line in the startup file you
 An existing alias or loaded function can still shadow the executable. Use the absolute path while you inspect your shell configuration.
 Install and update dependencies through their package owners.
 
+## Recover a modified client from a reviewed checkout
+
+These recovery and configuration commands require this reviewed local checkout.
+The published v0.2.3 installer does not expose them.
+Review the checkout separately. Local source paths and content digests do not establish publisher authenticity.
+
+If an older client embeds a socket workaround, supply the intended socket explicitly through the candidate:
+
+```bash
+bash setup.sh configure --socket /var/run/tailscaled.socket
+```
+
+This command runs the checkout's `bin/tailmux --config set socket` handler.
+It never runs the installed client or creates an installation prefix.
+Use the socket supplied by your installation. The example path is not a universal default.
+Configuration is a separate completed operation. Executable rollback does not undo it.
+
+Preview the destination without changing any installation, configuration, or shell files:
+
+```bash
+bash setup.sh recover --prefix "$HOME/.local/bin" --dry-run
+```
+
+The preview shows the installation classification, prefix, observed current digest, receipt's expected executable digest, candidate version and content digest, and local source path.
+It also shows the effective configuration and its source through the candidate's offline handler.
+The backup destination ends with `.tailmux-backup.XXXXXX`. Its random basename is chosen only during application.
+Unsafe, foreign, pending, or locked installations require inspection before proceeding.
+Malformed configuration remains a separate repair boundary.
+
+For a modified regular executable with a structurally valid path-bound receipt, approve the exact observed digest:
+
+```bash
+bash setup.sh recover --prefix "$HOME/.local/bin" --expect-current-sha256 LOWER64HEX
+```
+
+Replace `LOWER64HEX` with the 64 lowercase hexadecimal characters printed by preview.
+Recovery rechecks the executable, receipt, and metadata under the lifecycle lock before staging and replacement.
+A changed digest causes refusal. Missing or malformed receipts remain foreign and require a different prefix or manual inspection.
+There is no force-overwrite option.
+
+Recovery preserves and verifies the exact executable and receipt in a private backup under the prefix.
+The backup preserves content only and is local history, not an authenticated old release.
+Recovery never executes or parses the old wrapper, infers a socket, changes its receipt to bless old bytes, or edits shell startup files.
+A repeat after the candidate and receipt are already installed makes no changes or duplicate backups, even with the original approval digest.
+For a different unchanged owned version, use local `install --replace-owned`.
+See [pending transaction recovery](troubleshooting.md#resume-or-roll-back-a-recognized-pending-transaction) for interrupted operations.
+
 ## Prepare the destination
 
 Tailmux uses `tailscale ssh` for the remote terminal. Tailscale carries the connection over its private network and manages authentication and access.

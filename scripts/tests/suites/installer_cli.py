@@ -629,7 +629,7 @@ if [[ "$1" == */.tailmux-transaction ]]; then : > "$PUBLISHER_READY"; exec /bin/
         setup.write_bytes(SETUP.read_bytes())
         for option in ('--help', '-h', '--version', '-V'):
             p = self.success(option, setup=setup)
-            self.assertIn('0.2.3', p.stdout)
+            self.assertIn('0.3.0', p.stdout)
         self.refusal('update', setup=setup, contains='deprecated')
         self.refusal('install', setup=setup, contains='Required module missing')
         self.refusal('--help', 'extra', setup=setup)
@@ -655,7 +655,7 @@ if [[ "$1" == */.tailmux-transaction ]]; then : > "$PUBLISHER_READY"; exec /bin/
         self.assertEqual(sorted(p.name for p in self.prefix.iterdir()), ['.tailmux-receipt', 'tailmux'])
         self.success('install')
         p = subprocess.run([str(self.prefix / 'tailmux'), '--version'], env=cli_environment(self.bin, self.env), capture_output=True, text=True)
-        self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.3\n'))
+        self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.3.0\n'))
         self.success('uninstall')
         self.assertFalse((self.prefix / 'tailmux').exists())
         self.assertEqual(self.rc.read_bytes(), body)
@@ -709,7 +709,7 @@ esac
             self.assertEqual(self.rc.read_bytes(), body)
             self.assertFalse((self.home / 'RC_WAS_EXECUTED').exists())
             p = subprocess.run([str(self.prefix / 'tailmux'), '--version'], env=cli_environment(self.bin, self.env), capture_output=True, text=True)
-            self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.2.3\n'))
+            self.assertEqual((p.returncode, p.stdout), (0, 'tailmux 0.3.0\n'))
             self.success('uninstall')
             self.assertEqual(self.rc.read_bytes(), body)
 

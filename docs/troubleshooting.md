@@ -129,9 +129,46 @@ A caught publication failure or SIGTERM attempts to restore both previous files 
 If rollback cannot complete, or SIGKILL interrupts replacement, preserve `.tailmux-transaction`, its named stage and backup, and `.tailmux-install-lock/owner`.
 The error identifies a recognized pending transaction by ID. Install, replacement, and uninstall refuse it without further changes.
 Do not delete a lock, rewrite a receipt, or rerun publication by hand to bypass that refusal.
-P1 has no operator resume, rollback, or abandoned-lock command. Have the owner inspect the saved record and artifacts before any manual recovery.
+The reviewed local setup provides [explicit transaction maintenance](#resume-or-roll-back-a-recognized-pending-transaction).
 Malformed records, mismatched digests, symlinks, and special files require owner inspection and remain untouched.
 
 An interruption after transaction removal can leave a completed owned client and its owner lock without a transaction record.
 All lifecycle commands still refuse that lock. Preserve the lock, stage, and backups for owner inspection.
 A recovery procedure that requires a recognized pending transaction does not apply when its record is absent.
+
+## Resume or roll back a recognized pending transaction
+
+Use this reviewed local checkout. The published v0.2.3 adapter does not expose recovery commands.
+First inspect the read-only preview and preserve the transaction, stage, backup, and lock:
+
+```bash
+bash setup.sh recover --prefix "$HOME/.local/bin" --dry-run
+```
+
+Copy the exact recognized transaction ID and observed current executable SHA256.
+These values refer to the current public executable, which may already be the candidate after an interrupted rename.
+If the lifecycle lock remains, confirm that no writer is active before releasing it explicitly:
+
+```bash
+bash setup.sh recover --prefix "$HOME/.local/bin" --unlock-abandoned --transaction ID --expect-current-sha256 LOWER64HEX
+```
+
+`--unlock-abandoned` is your assertion that no lifecycle writer remains active.
+It rechecks the recognized transaction, owner record, prefix, public pair, and verified stage and backup contents before releasing only that matching lock.
+It does not resume or replace anything. There is no automatic age or PID unlock.
+Unknown, malformed, recordless, and completed-cleanup locks require owner inspection.
+
+After unlocking, choose one operation with the current digest and the same transaction ID:
+
+```bash
+bash setup.sh recover --prefix "$HOME/.local/bin" --resume --transaction ID --expect-current-sha256 LOWER64HEX
+bash setup.sh recover --prefix "$HOME/.local/bin" --rollback --transaction ID --expect-current-sha256 LOWER64HEX
+```
+
+Both operations acquire the ordinary lock and recheck the record and artifacts.
+Resume requires the staged candidate to match this checkout's actual candidate bytes.
+If candidates differ, use the matching reviewed checkout or explicitly roll back.
+A refused resume guard does not trigger implicit rollback.
+Rollback restores the verified previous local content and receipt. It does not authenticate that history or change saved configuration.
+Wrong IDs, changed current digests, third-party public bytes, or mismatched artifacts cause refusal and preserve the evidence.
+Use a new preview after an interrupted maintenance operation because the current digest may have changed.

@@ -301,11 +301,114 @@ replacement_exit() {
   exit "$status"
 }
 
+recovery_apply_allowed() {
+  if [[ "$INSTALL_STATE" == foreign ]]; then
+    rc_error 'Foreign installation; choose a different prefix or inspect the missing or malformed receipt manually' "$TAILMUX_PREFIX"
+    return 1
+  fi
+  if [[ "$INSTALL_STATE" != modified ]]; then
+    installation_allowed || return 1
+    rc_error 'Recovery requires a modified receipt-owned executable; use install --replace-owned for a different owned version' "$TAILMUX_PREFIX"
+    return 1
+  fi
+  [[ "$INSTALL_CURRENT_DIGEST" == "${RECOVERY_REQUEST[1]}" ]] || {
+    rc_error 'Current executable digest changed or was not approved; preview again' "$TAILMUX_PREFIX"; return 1;
+  }
+}
+
+recovery_pending_guard() {
+  local candidate_digest="$1"
+  inspect_installation "$TAILMUX_PREFIX"
+  [[ "$INSTALL_STATE" == pending && "$INSTALL_TRANSACTION" == "${RECOVERY_REQUEST[2]}" &&
+    "$INSTALL_CURRENT_DIGEST" == "${RECOVERY_REQUEST[1]}" ]] || {
+    rc_error 'Recovery requires the exact recognized pending transaction and approved current digest; preserve artifacts for inspection' "$TAILMUX_PREFIX"; return 1;
+  }
+  if [[ "${RECOVERY_REQUEST[0]}" == resume && "$TX_AFTER_BINARY" != "$candidate_digest" ]]; then
+    rc_error 'Pending candidate differs from this reviewed local candidate; use the matching candidate or explicit --rollback' "$TAILMUX_PREFIX"
+    return 1
+  fi
+}
+
+do_recover() (
+  local action="${RECOVERY_REQUEST[0]}" stage='' id='' locked=false config_status=0 candidate_digest
+  local TX_ID TX_OPERATION TX_PHASE TX_PREFIX_DIGEST TX_BEFORE_BINARY TX_BEFORE_RECEIPT TX_AFTER_BINARY TX_AFTER_RECEIPT TX_BACKUP TX_STAGE
+  candidate_digest="$(installation_digest "$SCRIPT_DIR/bin/tailmux")" || {
+    rc_error 'Cannot verify local candidate content' "$SCRIPT_DIR/bin/tailmux"; return 1;
+  }
+  inspect_installation "$TAILMUX_PREFIX"
+  if [[ -e "$TAILMUX_PREFIX/.tailmux-install-lock" || -L "$TAILMUX_PREFIX/.tailmux-install-lock" ]]; then locked=true; fi
+  if [[ "$action" == dry-run ]]; then
+    printf 'Classification: %s\nApproved prefix: %s\nLifecycle locked: %s\n' "$INSTALL_STATE" "$TAILMUX_PREFIX" "$locked"
+    printf 'Observed current SHA256: %s\nReceipt expected executable SHA256: %s\n' "${INSTALL_CURRENT_DIGEST:-unavailable}" "${INSTALL_RECEIPT_DIGEST:-unavailable}"
+    if [[ -n "$INSTALL_RECEIPT_DIGEST" ]]; then printf 'Receipt state: structurally valid and path-bound\n'; else printf 'Receipt state: unavailable or invalid\n'; fi
+    printf 'Candidate version: %s\nCandidate content SHA256: %s\nLocal source path: %s\n' "$TAILMUX_VERSION" "$candidate_digest" "$SCRIPT_DIR"
+    printf 'Local content identity only; publisher authenticity is not established.\nBackup destination pattern: %s/.tailmux-backup.XXXXXX\n' "$TAILMUX_PREFIX"
+    if [[ -n "$INSTALL_TRANSACTION" ]]; then printf 'Pending transaction: %s\n' "$INSTALL_TRANSACTION"; fi
+    /bin/bash "$SCRIPT_DIR/bin/tailmux" --config show || config_status=$?
+    if (( config_status != 0 )); then
+      printf '%s\n' 'Configuration needs separate inspection or explicit repair; recovery does not change it.' >&2
+    fi
+    [[ "$locked" == false && "$INSTALL_STATE" != pending ]] || {
+      rc_error 'Pending or locked lifecycle; inspect before explicit transaction maintenance' "$TAILMUX_PREFIX"; return 1;
+    }
+    case "$INSTALL_STATE" in
+      modified|owned) return "$config_status" ;;
+      foreign) rc_error 'Foreign installation; choose a different prefix or inspect the missing or malformed receipt manually' "$TAILMUX_PREFIX" ;;
+      *) installation_allowed || return 1; rc_error 'No modified executable to recover' "$TAILMUX_PREFIX" ;;
+    esac
+    return 1
+  fi
+  if [[ "$action" == apply ]]; then
+    [[ "$locked" == false ]] || { rc_error 'Installation lifecycle is locked; inspect before retrying' "$TAILMUX_PREFIX/.tailmux-install-lock"; return 1; }
+    if [[ "$INSTALL_STATE" == owned && "$INSTALL_CURRENT_DIGEST" == "$candidate_digest" ]]; then
+      printf 'Client already installed at %s/tailmux; no recovery changes needed.\n' "$TAILMUX_PREFIX"
+      return 0
+    fi
+    do_replace_owned recover-modified "$candidate_digest"
+    return $?
+  fi
+  recovery_pending_guard "$candidate_digest" || return 1
+  id="$TX_ID"
+  if [[ "$action" == unlock-abandoned ]]; then
+    if [[ "$locked" != true ]] || ! lifecycle_owner_matches "$TAILMUX_PREFIX" "$id"; then
+      rc_error 'No matching recorded abandoned lock; owner inspection required' "$TAILMUX_PREFIX"; return 1;
+    fi
+    recovery_pending_guard "$candidate_digest" && lifecycle_unlock "$TAILMUX_PREFIX" "$id" || return 1
+    printf 'Released recorded lock for transaction %s on operator assertion that no writer remains active. No publication performed.\n' "$id"
+    return 0
+  fi
+  [[ "$locked" == false ]] || {
+    rc_error 'Pending lifecycle is locked; confirm no writer remains active before explicit --unlock-abandoned' "$TAILMUX_PREFIX"; return 1;
+  }
+  lifecycle_lock "$TAILMUX_PREFIX" "$id" || return 1
+  recovery_pending_guard "$candidate_digest" || return 1
+  stage="$TAILMUX_PREFIX/$TX_STAGE"
+  trap 'replacement_exit "$?" "$TAILMUX_PREFIX" "$id" "$stage"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  case "$action" in
+    resume) transaction_publish "$TAILMUX_PREFIX" && transaction_clear "$TAILMUX_PREFIX" || return 1 ;;
+    rollback) transaction_restore_receipt_then_binary "$TAILMUX_PREFIX" || return 1 ;;
+  esac
+  transaction_remove_stage "$stage" || return 1
+  stage=''
+  lifecycle_unlock "$TAILMUX_PREFIX" "$id" || return 1
+  trap - EXIT INT TERM
+  printf 'Recovery %s complete for transaction %s. Backup retained at %s/%s\n' "$action" "$id" "$TAILMUX_PREFIX" "$TX_BACKUP"
+)
+
 do_replace_owned() (
-  local stage='' id=".tailmux-tx.$$.$RANDOM" digest backup
+  local stage='' id=".tailmux-tx.$$.$RANDOM" digest backup operation="${1:-replace-owned}" approved_receipt='' candidate_digest="${2:-}"
+  local TX_ID TX_OPERATION TX_PHASE TX_PREFIX_DIGEST TX_BEFORE_BINARY TX_BEFORE_RECEIPT TX_AFTER_BINARY TX_AFTER_RECEIPT TX_BACKUP TX_STAGE
   local -a LIFECYCLE_CONTEXT=("" "$(uname -s)")
-  require_installation || return 1
-  [[ "$INSTALL_STATE" == owned ]] || { rc_error 'Replacement requires an existing owned executable' "$TAILMUX_PREFIX"; return 1; }
+  if [[ "$operation" == recover-modified ]]; then
+    inspect_installation "$TAILMUX_PREFIX"
+    recovery_apply_allowed || return 1
+    approved_receipt="$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" || return 1
+  else
+    require_installation || return 1
+    [[ "$INSTALL_STATE" == owned ]] || { rc_error 'Replacement requires an existing owned executable' "$TAILMUX_PREFIX"; return 1; }
+  fi
   lifecycle_lock "$TAILMUX_PREFIX" "$id" || return 1
   trap 'replacement_exit "$?" "$TAILMUX_PREFIX" "$id" "$stage"' EXIT
   trap 'exit 130' INT
@@ -313,9 +416,17 @@ do_replace_owned() (
   validate_prefix "$TAILMUX_PREFIX" "${LIFECYCLE_CONTEXT[1]}" || return 1
   LIFECYCLE_CONTEXT[0]="$TAILMUX_PREFIX"
   inspect_installation "$TAILMUX_PREFIX"
-  installation_allowed && [[ "$INSTALL_STATE" == owned ]] || return 1
+  if [[ "$operation" == recover-modified ]]; then
+    if ! recovery_apply_allowed ||
+      [[ "$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" != "$approved_receipt" ]]; then
+      rc_error 'Recovery observation changed under the lifecycle lock; preview again' "$TAILMUX_PREFIX"
+      return 1
+    fi
+  else
+    installation_allowed && [[ "$INSTALL_STATE" == owned ]] || return 1
+  fi
   [[ -f "$SCRIPT_DIR/bin/tailmux" && ! -L "$SCRIPT_DIR/bin/tailmux" ]] || return 1
-  if cmp -s "$SCRIPT_DIR/bin/tailmux" "$TAILMUX_PREFIX/tailmux"; then
+  if [[ "$operation" == replace-owned ]] && cmp -s "$SCRIPT_DIR/bin/tailmux" "$TAILMUX_PREFIX/tailmux"; then
     printf 'Client already installed at %s/tailmux\n' "$TAILMUX_PREFIX"
     return 0
   fi
@@ -326,14 +437,19 @@ do_replace_owned() (
   cp "$SCRIPT_DIR/bin/tailmux" "$stage/candidate" && chmod 755 "$stage/candidate" &&
     cmp -s "$SCRIPT_DIR/bin/tailmux" "$stage/candidate" || return 1
   digest="$(installation_digest "$stage/candidate")" || return 1
+  [[ "$operation" != recover-modified || "$digest" == "$candidate_digest" ]] || return 1
   printf 'tailmux-receipt-v1\n%s/tailmux\n%s\n' "$TAILMUX_PREFIX" "$digest" > "$stage/candidate-receipt" || return 1
   chmod 600 "$stage/candidate-receipt" || return 1
   backup="$(mktemp -d "$TAILMUX_PREFIX/.tailmux-backup.XXXXXX")" || return 1
   cp "$TAILMUX_PREFIX/tailmux" "$backup/tailmux" && chmod 700 "$backup/tailmux" &&
     cp "$TAILMUX_PREFIX/.tailmux-receipt" "$backup/receipt" && chmod 600 "$backup/receipt" || return 1
-  TX_ID="$id" TX_OPERATION=replace-owned TX_PHASE=prepared
+  TX_ID="$id" TX_OPERATION="$operation" TX_PHASE=prepared
   TX_BEFORE_BINARY="$INSTALL_CURRENT_DIGEST" TX_AFTER_BINARY="$digest"
-  TX_BEFORE_RECEIPT="$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" || return 1
+  if [[ "$operation" == recover-modified ]]; then
+    TX_BEFORE_RECEIPT="$approved_receipt"
+  else
+    TX_BEFORE_RECEIPT="$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" || return 1
+  fi
   TX_AFTER_RECEIPT="$(installation_digest "$stage/candidate-receipt")" || return 1
   TX_BACKUP=${backup##*/} TX_STAGE=${stage##*/}
   transaction_validate "$TAILMUX_PREFIX" && transaction_write "$TAILMUX_PREFIX" prepared || return 1
