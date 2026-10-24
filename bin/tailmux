@@ -237,11 +237,14 @@ config_command() {
     [[ -n "$config_stage" && "$config_stage" == "$config_dir/.config-stage."* ]] || fail "invalid-config: invalid staging path for $config_file" 2
     config_metadata "$config_stage" file || fail "invalid-config: unsafe stage $config_stage" 2
     printf 'tailmux-config-v1\nsocket=%s\n' "$value" > "$config_stage" || fail "invalid-config: cannot write $config_stage" 2
-    config_metadata "$config_stage" file && config_snapshot "$config_stage" &&
-      [[ "$config_text" == tailmux-config-v1$'\nsocket='"$value"$'\n' ]] || fail "invalid-config: cannot verify $config_stage" 2
+    if ! config_metadata "$config_stage" file || ! config_snapshot "$config_stage" ||
+      [[ "$config_text" != tailmux-config-v1$'\nsocket='"$value"$'\n' ]]; then
+      fail "invalid-config: cannot verify $config_stage" 2
+    fi
     mv -f "$config_stage" "$config_file" || fail "invalid-config: cannot publish $config_file" 2
-    config_read && [[ "${saved_socket[1]}" == "$value" && ! -e "$config_stage" && ! -L "$config_stage" ]] ||
+    if ! config_read || [[ "${saved_socket[1]}" != "$value" || -e "$config_stage" || -L "$config_stage" ]]; then
       fail "invalid-config: cannot verify published $config_file" 2
+    fi
     config_stage=''
     printf 'Saved socket: %s\n' "$value"
   else
