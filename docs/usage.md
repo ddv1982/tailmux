@@ -24,6 +24,8 @@ A caught replacement failure attempts verified rollback. An interrupted rollback
 Modified or foreign files, unsafe destinations, and unknown locks cause refusal.
 Follow the [recovery guide](troubleshooting.md#recover-a-modified-client) for preview, exact-digest approval, backups, and transaction maintenance.
 
+## Recover a modified client from a reviewed checkout
+
 From an independently reviewed local checkout, these alternatives work offline:
 
 ```bash
