@@ -1,5 +1,6 @@
 # shellcheck shell=bash
 LIFECYCLE_CONTEXT=()
+LIFECYCLE_ACQUISITION_LOCK=''
 
 validate_prefix() {
   local prefix="$1" component="$1" uid mode platform="${2:-$(uname -s)}"
@@ -94,8 +95,24 @@ lifecycle_owner_matches() {
 lifecycle_lock() {
   local prefix="$1" id="$2" lock="$1/.tailmux-install-lock"
   (umask 077; mkdir "$lock") || { rc_error 'Installation lifecycle is locked; inspect before retrying' "$lock"; return 1; }
+  LIFECYCLE_ACQUISITION_LOCK="$lock"
+  trap 'lifecycle_acquisition_exit "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   (umask 077; lifecycle_owner_record "$id" > "$lock/owner") || return 1
   lifecycle_owner_matches "$prefix" "$id"
+}
+
+lifecycle_acquisition_exit() {
+  local status="$1" lock="$LIFECYCLE_ACQUISITION_LOCK"
+  trap - EXIT INT TERM
+  if lifecycle_directory "$lock" 700; then
+    if [[ -e "$lock/owner" || -L "$lock/owner" ]]; then
+      lifecycle_file "$lock/owner" 256 600 && rm "$lock/owner" || exit "$status"
+    fi
+    rmdir "$lock" || :
+  fi
+  exit "$status"
 }
 
 lifecycle_unlock() {
@@ -302,6 +319,9 @@ do_replace_owned() (
     printf 'Client already installed at %s/tailmux\n' "$TAILMUX_PREFIX"
     return 0
   fi
+  TX_PREFIX_DIGEST="$(printf '%s' "$TAILMUX_PREFIX" | content_digest)" || return 1
+  TX_PREFIX_DIGEST=${TX_PREFIX_DIGEST%% *}
+  [[ "$TX_PREFIX_DIGEST" =~ ^[a-f0-9]{64}$ ]] || return 1
   stage="$(mktemp -d "$TAILMUX_PREFIX/.tailmux-stage.XXXXXX")" || return 1
   cp "$SCRIPT_DIR/bin/tailmux" "$stage/candidate" && chmod 755 "$stage/candidate" &&
     cmp -s "$SCRIPT_DIR/bin/tailmux" "$stage/candidate" || return 1
@@ -312,9 +332,6 @@ do_replace_owned() (
   cp "$TAILMUX_PREFIX/tailmux" "$backup/tailmux" && chmod 700 "$backup/tailmux" &&
     cp "$TAILMUX_PREFIX/.tailmux-receipt" "$backup/receipt" && chmod 600 "$backup/receipt" || return 1
   TX_ID="$id" TX_OPERATION=replace-owned TX_PHASE=prepared
-  TX_PREFIX_DIGEST="$(printf '%s' "$TAILMUX_PREFIX" | content_digest)" || return 1
-  TX_PREFIX_DIGEST=${TX_PREFIX_DIGEST%% *}
-  [[ "$TX_PREFIX_DIGEST" =~ ^[a-f0-9]{64}$ ]] || return 1
   TX_BEFORE_BINARY="$INSTALL_CURRENT_DIGEST" TX_AFTER_BINARY="$digest"
   TX_BEFORE_RECEIPT="$(installation_digest "$TAILMUX_PREFIX/.tailmux-receipt")" || return 1
   TX_AFTER_RECEIPT="$(installation_digest "$stage/candidate-receipt")" || return 1
