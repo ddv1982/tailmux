@@ -47,6 +47,7 @@ def drive(argv, output, timeout, env):
             os._exit(126)
     status, outcome, count = None, 'exited', 0
     deadline = time.monotonic() + timeout
+    expired = False
 
     def resize(_signum, _frame):
         current = fcntl.ioctl(0, termios.TIOCGWINSZ, b'\0' * 8)
@@ -59,7 +60,10 @@ def drive(argv, output, timeout, env):
         raise KeyboardInterrupt
 
     def expire(_signum, _frame):
-        raise TimeoutError
+        nonlocal expired
+        if not expired:
+            expired = True
+            raise TimeoutError
 
     try:
         fcntl.ioctl(master, termios.TIOCSWINSZ, size)

@@ -369,12 +369,18 @@ class Acceptance(unittest.TestCase):
             self.assertTrue(trace.exists())
 
     def test_cleanup_survives_late_alarm_and_terminal_restore_failures(self):
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                                 'Acceptance._check_cleanup_survives_late_alarm_and_terminal_restore_failures'],
+                                capture_output=True, text=True, timeout=15, env=ENV)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def _check_cleanup_survives_late_alarm_and_terminal_restore_failures(self):
         spec = importlib.util.spec_from_file_location('cleanup_smoke', SMOKE)
         smoke = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(smoke)
         signals = (signal.SIGWINCH, signal.SIGTERM, signal.SIGHUP, signal.SIGALRM)
         cases = [(failure, late) for failure in (None, termios.error, OSError)
-                 for late in (None, 'disarm', 'ignore')]
+                 for late in (None, 'disarm', 'ignore', 'ignore-twice')]
         cases.append(('initial-io', None))
         for index, (failure, late) in enumerate(cases):
             with self.subTest(failure=failure, late_alarm=late):
@@ -391,7 +397,7 @@ class Acceptance(unittest.TestCase):
                 original_timer = signal.setitimer
                 original_signal = signal.signal
                 owned = {}
-                injected = False
+                injected = 0
 
                 def capture_fork():
                     pid, descriptor = original_fork()
@@ -409,21 +415,23 @@ class Acceptance(unittest.TestCase):
                         raise OSError(errno.EIO, 'fixture initial terminal sizing failure')
                     return original_ioctl(fd, operation, argument)
 
-                def late_alarm():
+                def late_alarm(limit=1):
                     nonlocal injected
-                    if not injected:
-                        injected = True
+                    if injected < limit:
+                        injected += 1
                         original_timer(signal.ITIMER_REAL, 0)
                         os.kill(os.getpid(), signal.SIGALRM)
 
                 def timer(which, seconds, interval=0):
+                    if late == 'ignore-twice' and which == signal.ITIMER_REAL and seconds > 0:
+                        return original_timer(which, 0)
                     if late == 'disarm' and which == signal.ITIMER_REAL and seconds == 0:
                         late_alarm()
                     return original_timer(which, seconds, interval)
 
                 def handler(signum, value):
-                    if late == 'ignore' and signum == signal.SIGALRM and value == signal.SIG_IGN:
-                        late_alarm()
+                    if late in ('ignore', 'ignore-twice') and signum == signal.SIGALRM and value == signal.SIG_IGN:
+                        late_alarm(2 if late == 'ignore-twice' else 1)
                     return original_signal(signum, value)
 
                 try:
@@ -435,13 +443,13 @@ class Acceptance(unittest.TestCase):
                         result = smoke.drive(['/bin/sleep', '5'], output, 0.05,
                                              {'PATH': '/usr/bin:/bin', 'TERM': 'xterm'})
                     self.assertEqual(result['outcome'], 'io-error' if failure else 'timeout')
-                    self.assertEqual(injected, late is not None)
+                    self.assertEqual(injected, 2 if late == 'ignore-twice' else int(late is not None))
                     with self.assertRaises(ChildProcessError):
                         os.waitpid(owned['pid'], os.WNOHANG)
                     with self.assertRaises(OSError):
                         os.fstat(owned['descriptor'])
                     self.assertEqual({signum: signal.getsignal(signum) for signum in signals}, handlers)
-                    self.assertEqual(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+                    self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0.0, 0.0))
                     if failure is None or failure == 'initial-io':
                         terminal_after = termios.tcgetattr(0)
                         for attributes in (terminal_before, terminal_after):
