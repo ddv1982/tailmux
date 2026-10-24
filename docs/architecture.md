@@ -107,7 +107,8 @@ No package, service, authentication, policy, or release operation belongs to the
 Local `setup.sh install --replace-owned` replaces an unchanged receipt-owned executable under one prefix lifecycle lock.
 It skips RC inspection and migration, including HOME and ZDOTDIR validation when an explicit prefix is supplied.
 Ordinary install and uninstall retain their RC checks and recognized-block cleanup.
-The published `install.sh` adapter is unchanged and does not use this replacement operation yet.
+The public `install.sh update` authenticates the package and delegates to this operation for an existing regular client.
+When the executable is absent, it uses ordinary installation, including valid same-source receipt-only recovery.
 
 `inspect_installation` produces one result through `INSTALL_STATE`, `INSTALL_PREFIX`, `INSTALL_CURRENT_DIGEST`, `INSTALL_RECEIPT_DIGEST`, and `INSTALL_TRANSACTION`.
 The receipt digest is the expected executable digest recorded in the receipt.
