@@ -171,6 +171,7 @@ printf '%s\\n' "$INSTALL_STATE" "$INSTALL_PREFIX" "$INSTALL_CURRENT_DIGEST" "$IN
 
     def test_p1_invalid_prefix_digest_never_publishes_transaction(self):
         older, receipt = self.older_owned()
+        before = self.tree()
         attempted = self.root / 'attempted-transaction'
         real_hash = shutil.which('shasum')
         real_mv = shutil.which('mv')
@@ -183,6 +184,7 @@ printf '%s\\n' "$INSTALL_STATE" "$INSTALL_PREFIX" "$INSTALL_CURRENT_DIGEST" "$IN
                      ATTEMPTED_TRANSACTION=str(attempted))
         self.assert_old_pair(older, receipt)
         self.assertFalse(attempted.exists(), attempted.read_text() if attempted.exists() else '')
+        self.assertEqual(self.tree(), before)
 
     def test_p1_replace_owned_without_rc_prerequisites_and_repeat(self):
         older, receipt = self.older_owned()
