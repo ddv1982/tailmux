@@ -108,6 +108,23 @@ class Configuration(unittest.TestCase):
         self.ok('--config', 'reset', 'socket', TAILMUX_TAILSCALE_SOCKET='bad')
         self.assertEqual(self.fx.calls(), [])
 
+    def test_absent_home_hierarchy_reaches_existing_root_without_hanging(self):
+        missing_top = Path('/') / f'{self.root.name}-absent'
+        self.assertFalse(missing_top.exists())
+        for home in (missing_top / 'nested/home', self.root / 'missing/nested/home'):
+            with self.subTest(home=str(home)):
+                env = runtime_cli.cli_environment(self.bin, self.fx.env, HOME=str(home))
+                result = subprocess.run(['/bin/bash', str(CLIENT), '--config', 'show'],
+                                        env=env, cwd=self.root, capture_output=True,
+                                        text=True, timeout=3)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f'Config file: {home}/.config/tailmux/config\n', result.stdout)
+                self.assertIn('Saved state: absent\n', result.stdout)
+                self.assertIn('Source: native default\n', result.stdout)
+                self.assertFalse(home.exists())
+                self.assertEqual(self.fx.calls(), [])
+                self.assertFalse(self.fx.forbidden.exists())
+
     def test_exact_grammar_and_control_bytes(self):
         bad = [b'', b'tailmux-config-v1', b'tailmux-config-v1\nsocket=/a',
                b'tailmux-config-v1\nsocket=/a\n\n', b'tailmux-config-v1\nsocket=\n',

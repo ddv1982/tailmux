@@ -131,7 +131,10 @@ config_read() {
   saved_socket=(unsafe '' "unsafe, linked, unreadable, oversized, or unverifiable data at $config_file")
   if [[ ! -e "$config_file" && ! -L "$config_file" ]]; then
     local ancestor=$config_dir
-    while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do ancestor=${ancestor%/*}; done
+    while [[ ! -e "$ancestor" && ! -L "$ancestor" ]]; do
+      ancestor=${ancestor%/*}
+      [[ -n "$ancestor" ]] || ancestor=/
+    done
     config_metadata "$ancestor" directory || return 1
     saved_socket=(absent '' '')
     return 0
