@@ -10,20 +10,16 @@ import unittest
 
 import direct_install as direct
 
-REQUEST = direct.REQUEST
 ROOT = direct.ROOT
 
 
 class SetupScriptTests(unittest.TestCase):
     def setUp(self):
         self.fixture = direct.DirectInstallTests()
-        self.fixture.setUp()
+        self.fixture.setUp(published=True)
         self.addCleanup(self.fixture.doCleanups)
         self.script = self.fixture.root / 'install.sh'
-        script = (ROOT / 'install.sh').read_text()
-        script = re.sub(r'^source_sha=[0-9a-f]{40}$', 'source_sha=' + REQUEST.source_sha, script, flags=re.MULTILINE)
-        script = re.sub(r'^tag=v[^\n]+$', 'tag=' + REQUEST.tag, script, flags=re.MULTILINE)
-        self.script.write_text(script)
+        self.script.write_bytes((ROOT / 'install.sh').read_bytes())
         self.binary = self.fixture.home / '.local/bin/tailmux'
         self.rc = self.fixture.home / '.bashrc'
         self.rc.write_bytes(b'# operator-owned\n')
@@ -52,7 +48,7 @@ class SetupScriptTests(unittest.TestCase):
 
     def test_install_update_and_repeat_uninstall(self):
         self.success('install')
-        expected = (ROOT / 'bin/tailmux').read_bytes()
+        expected = self.fixture.payload['bin/tailmux']
         self.assertEqual(self.binary.read_bytes(), expected)
         self.success('update')
         self.assertEqual(self.binary.read_bytes(), expected)
@@ -78,7 +74,7 @@ class SetupScriptTests(unittest.TestCase):
         receipt.write_text('tailmux-receipt-v1\n' + str(self.binary) + '\n' +
                            hashlib.sha256(older).hexdigest() + '\n')
         self.success('update')
-        self.assertEqual(self.binary.read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        self.assertEqual(self.binary.read_bytes(), self.fixture.payload['bin/tailmux'])
         backups = list(self.binary.parent.glob('.tailmux-backup.*'))
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / 'tailmux').read_bytes(), older)
@@ -139,7 +135,7 @@ class SetupScriptTests(unittest.TestCase):
     def test_custom_prefix_and_offline_help(self):
         prefix = self.fixture.home / 'custom bin'
         self.success('install', '--prefix', str(prefix))
-        self.assertEqual((prefix / 'tailmux').read_bytes(), (ROOT / 'bin/tailmux').read_bytes())
+        self.assertEqual((prefix / 'tailmux').read_bytes(), self.fixture.payload['bin/tailmux'])
         self.success('uninstall', '--prefix', str(prefix))
         self.assertFalse((prefix / 'tailmux').exists())
         before = self.fixture.events()

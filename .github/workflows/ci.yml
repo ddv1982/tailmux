@@ -22,6 +22,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install development tools
         run: |
           python3 -m venv .venv
@@ -47,6 +48,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install test dependencies through the runner package owner
         run: |
           sudo apt-get update -qq && sudo apt-get install -y jq shellcheck e2fsprogs
@@ -66,6 +68,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install test dependencies through the runner package owner
         run: |
           brew list jq shellcheck >/dev/null 2>&1 || brew install jq shellcheck
